@@ -76,8 +76,8 @@ def get_portfolio(
         result.append({
             "portfolio_id": item.portfolio_id,
             "symbol_code": item.symbol_code,
-            # item.security: Portfolio 모델의 relationship으로 Security 객체 바로 접근 가능
-            "security_name": item.security.name if item.security else "",
+            # item.item_master: Portfolio 모델의 relationship으로 ItemMaster 객체 바로 접근 가능
+            "security_name": item.item_master.name if item.item_master else "",
             "avg_price": float(item.avg_price),
             "hold_quantity": item.hold_quantity,
             # 평가금액 = 평균단가 × 보유수량 (실제 현재가 기준은 프론트에서 계산)
