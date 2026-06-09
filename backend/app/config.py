@@ -1,0 +1,55 @@
+"""
+config.py - 환경변수 설정 파일
+
+.env 파일에 적어둔 값들(DB 주소, 비밀키 등)을 
+파이썬 코드에서 쉽게 불러올 수 있도록 관리하는 파일입니다.
+
+사용 예시:
+    from app.config import settings
+    print(settings.DATABASE_URL)  # DB 주소 출력
+"""
+
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """
+    프로젝트 전체에서 사용하는 설정값 모음.
+    
+    BaseSettings를 상속하면 .env 파일을 자동으로 읽어옵니다.
+    예를 들어 .env에 DATABASE_URL=postgresql://... 이라고 쓰면
+    settings.DATABASE_URL 로 꺼내 쓸 수 있습니다.
+    """
+
+    # PostgreSQL 데이터베이스 접속 주소
+    # 형식: postgresql://유저명:비밀번호@서버주소:포트/DB이름
+    DATABASE_URL: str
+
+    # JWT 토큰을 만들 때 쓰는 비밀 암호키
+    # 이 키가 유출되면 누구나 가짜 토큰을 만들 수 있으므로 절대 외부 공유 금지
+    SECRET_KEY: str
+
+    # JWT 암호화 방식 (HS256이 표준)
+    ALGORITHM: str = "HS256"
+
+    # 로그인 토큰 유효 시간 (분 단위, 기본 60분 = 1시간)
+    # 이 시간이 지나면 자동 로그아웃됨
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
+    # 한국투자증권 오픈API 키 (실시간 주가 조회에 필요)
+    # https://apiportal.koreainvestment.com 에서 무료 발급
+    KIS_APP_KEY: str = ""
+    KIS_APP_SECRET: str = ""
+    KIS_ACCOUNT_NO: str = ""
+
+    # AI팀 서버 주소 (AI팀이 서버를 띄우면 그 주소로 변경)
+    AI_SERVER_URL: str = "http://localhost:8001"
+
+    class Config:
+        # 설정값을 읽어올 파일 이름 (.env 파일)
+        env_file = ".env"
+
+
+# settings 객체를 한 번 만들어두고 다른 파일에서 import해서 사용
+# 예: from app.config import settings
+settings = Settings()
