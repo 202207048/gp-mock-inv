@@ -22,9 +22,9 @@ import httpx
 from app.config import settings
 
 # 한국투자증권 API 기본 주소
-# 모의투자: https://openapivts.koreainvestment.com:9443
-# 실전투자: https://openapi.koreainvestment.com:9443
-KIS_BASE_URL = "https://openapivts.koreainvestment.com:9443"
+# 모의투자: https://openapivts.koreainvestment.com:29443  (포트 29443)
+# 실전투자: https://openapi.koreainvestment.com:9443      (포트 9443)
+KIS_BASE_URL = "https://openapivts.koreainvestment.com:29443"
 
 # 토큰 캐시 (딕셔너리에 저장해서 재사용)
 # 구조:
