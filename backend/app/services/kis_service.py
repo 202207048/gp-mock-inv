@@ -58,7 +58,8 @@ async def get_kis_token() -> str:
         return _token_cache["token"]
 
     # 토큰이 없거나 만료됐으면 → 새로 발급받기
-    async with httpx.AsyncClient() as client:
+    # verify=False: KIS 모의투자 서버의 SSL 인증서 검증 비활성화 (인증서 호스트명 불일치 문제 우회)
+    async with httpx.AsyncClient(verify=False) as client:
         resp = await client.post(
             f"{KIS_BASE_URL}/oauth2/tokenP",
             json={
@@ -110,7 +111,7 @@ async def get_current_price(symbol_code: str) -> dict:
     # 유효한 토큰 가져오기 (만료됐으면 자동으로 새로 발급)
     token = await get_kis_token()
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=False) as client:
         resp = await client.get(
             f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
             headers={
@@ -167,7 +168,7 @@ async def get_stock_chart(symbol_code: str, period: str = "D") -> list[dict]:
 
     token = await get_kis_token()
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=False) as client:
         resp = await client.get(
             f"{KIS_BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-price",
             headers={
