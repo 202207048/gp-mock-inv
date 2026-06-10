@@ -119,12 +119,16 @@ async def get_current_price(symbol_code: str) -> dict:
                 "appkey": settings.KIS_APP_KEY,
                 "appsecret": settings.KIS_APP_SECRET,
                 "tr_id": "FHKST01010100",   # KIS API 거래ID (현재가 조회용 고정값)
+                "custtype": "P",             # P = 개인, B = 법인 (필수 헤더)
             },
             params={
                 "FID_COND_MRKT_DIV_CODE": "J",       # J = 주식시장
                 "FID_INPUT_ISCD": symbol_code,         # 조회할 종목 코드
             },
         )
+        # KIS 오류 시 응답 내용을 출력해서 디버깅에 활용
+        if resp.status_code >= 400:
+            print(f"[KIS 오류] status={resp.status_code} body={resp.text}")
         resp.raise_for_status()
         output = resp.json().get("output", {})
 
@@ -176,6 +180,7 @@ async def get_stock_chart(symbol_code: str, period: str = "D") -> list[dict]:
                 "appkey": settings.KIS_APP_KEY,
                 "appsecret": settings.KIS_APP_SECRET,
                 "tr_id": "FHKST01010400",   # KIS API 거래ID (일별 가격 조회용 고정값)
+                "custtype": "P",             # P = 개인, B = 법인 (필수 헤더)
             },
             params={
                 "FID_COND_MRKT_DIV_CODE": "J",
