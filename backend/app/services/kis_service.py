@@ -190,7 +190,10 @@ async def get_stock_chart(symbol_code: str, period: str = "D") -> list[dict]:
             },
         )
         resp.raise_for_status()
-        output = resp.json().get("output2", [])
+        raw = resp.json()
+        # KIS 응답 전체를 로그에 출력 (디버깅용 - 응답 구조 확인 후 제거 가능)
+        print(f"[KIS 차트 응답] keys={list(raw.keys())} rt_cd={raw.get('rt_cd')} msg={raw.get('msg1')}")
+        output = raw.get("output2", [])
 
         # KIS API 응답 필드명을 우리가 쓰기 편한 이름으로 변환
         return [
