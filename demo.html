@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GP 모의투자</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+
+    /* ── 네비게이션 ── */
+    nav {
+      background: #1a1d27;
+      border-bottom: 1px solid #2a2d3e;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .nav-logo { font-size: 20px; font-weight: 700; color: #4f8ef7; }
+    .nav-tabs { display: flex; gap: 4px; }
+    .nav-tab {
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      color: #888;
+      border: none;
+      background: none;
+      transition: all 0.2s;
+    }
+    .nav-tab:hover { color: #e0e0e0; background: #2a2d3e; }
+    .nav-tab.active { color: #4f8ef7; background: #1e2640; }
+    .nav-user { font-size: 13px; color: #888; }
+    .nav-user span { color: #4f8ef7; font-weight: 600; }
+
+    /* ── 메인 레이아웃 ── */
+    .container { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+
+    /* ── 섹션 ── */
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* ── 카드 ── */
+    .card {
+      background: #1a1d27;
+      border: 1px solid #2a2d3e;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #c0c0c0;
+      margin-bottom: 16px;
+    }
+
+    /* ── 그리드 ── */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 700px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    }
+
+    /* ── 폼 요소 ── */
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-size: 12px; color: #888; margin-bottom: 6px; }
+    input, select {
+      width: 100%;
+      padding: 10px 14px;
+      background: #0f1117;
+      border: 1px solid #2a2d3e;
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-size: 14px;
+      outline: none;
+      transition: border 0.2s;
+    }
+    input:focus, select:focus { border-color: #4f8ef7; }
+
+    /* ── 버튼 ── */
+    .btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary { background: #4f8ef7; color: #fff; }
+    .btn-primary:hover { background: #3a7ee6; }
+    .btn-success { background: #e53e3e; color: #fff; }
+    .btn-success:hover { background: #c53030; }
+    .btn-danger { background: #4299e1; color: #fff; }
+    .btn-danger:hover { background: #3182ce; }
+    .btn-outline {
+      background: none;
+      border: 1px solid #2a2d3e;
+      color: #888;
+    }
+    .btn-outline:hover { border-color: #4f8ef7; color: #4f8ef7; }
+    .btn-full { width: 100%; margin-top: 4px; }
+    .btn-sm { padding: 6px 14px; font-size: 13px; }
+
+    /* ── 통계 박스 ── */
+    .stat-box {
+      background: #0f1117;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-label { font-size: 11px; color: #666; margin-bottom: 6px; }
+    .stat-value { font-size: 22px; font-weight: 700; }
+    .stat-value.up { color: #e53e3e; }
+    .stat-value.down { color: #4299e1; }
+    .stat-value.neutral { color: #e0e0e0; }
+
+    /* ── 테이블 ── */
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { text-align: left; padding: 10px 12px; color: #666; font-size: 12px; border-bottom: 1px solid #2a2d3e; }
+    td { padding: 12px; border-bottom: 1px solid #1e2130; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1e2130; }
+
+    /* ── 배지 ── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-buy { background: #2d1e1e; color: #e53e3e; }
+    .badge-sell { background: #1e2530; color: #4299e1; }
+
+    /* ── 알림 ── */
+    .alert {
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+    .alert-success { background: #1a2e1a; border: 1px solid #276227; color: #68d391; }
+    .alert-error { background: #2d1e1e; border: 1px solid #822727; color: #fc8181; }
+    .alert-info { background: #1a2340; border: 1px solid #2c4a8c; color: #90cdf4; }
+
+    /* ── 로그인 화면 ── */
+    .login-wrap {
+      max-width: 420px;
+      margin: 80px auto 0;
+    }
+    .login-title { font-size: 28px; font-weight: 700; color: #4f8ef7; margin-bottom: 8px; }
+    .login-sub { font-size: 14px; color: #666; margin-bottom: 32px; }
+    .login-toggle { text-align: center; margin-top: 16px; font-size: 13px; color: #666; }
+    .login-toggle a { color: #4f8ef7; cursor: pointer; text-decoration: none; }
+
+    /* ── 주식 가격 색상 ── */
+    .price-up { color: #e53e3e; }
+    .price-down { color: #4299e1; }
+    .price-neutral { color: #e0e0e0; }
+
+    /* ── 순위 ── */
+    .rank-num {
+      font-size: 18px;
+      font-weight: 700;
+      color: #4f8ef7;
+      width: 32px;
+      text-align: center;
+    }
+    .rank-1 { color: #f6c90e; }
+    .rank-2 { color: #aaa; }
+    .rank-3 { color: #cd7f32; }
+
+    /* ── 로딩 ── */
+    .loading { text-align: center; padding: 40px; color: #555; }
+    .spinner {
+      display: inline-block;
+      width: 24px; height: 24px;
+      border: 3px solid #2a2d3e;
+      border-top-color: #4f8ef7;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── 뉴스 ── */
+    .news-item {
+      padding: 14px 0;
+      border-bottom: 1px solid #1e2130;
+    }
+    .news-item:last-child { border-bottom: none; }
+    .news-title { font-size: 14px; color: #c0c0c0; margin-bottom: 4px; }
+    .news-title a { color: inherit; text-decoration: none; }
+    .news-title a:hover { color: #4f8ef7; }
+    .news-meta { font-size: 12px; color: #555; }
+
+    /* ── 빈 상태 ── */
+    .empty { text-align: center; padding: 40px; color: #555; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+<!-- 네비게이션 -->
+<nav id="navbar" style="display:none">
+  <div class="nav-logo">📈 GP 모의투자</div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="showSection('dashboard')">홈</button>
+    <button class="nav-tab" onclick="showSection('stocks')">주식시세</button>
+    <button class="nav-tab" onclick="showSection('trade')">매수/매도</button>
+    <button class="nav-tab" onclick="showSection('portfolio')">포트폴리오</button>
+    <button class="nav-tab" onclick="showSection('ranking')">랭킹</button>
+    <button class="nav-tab" onclick="showSection('news')">뉴스</button>
+    <button class="nav-tab" onclick="showSection('community')">커뮤니티</button>
+  </div>
+  <div class="nav-user">
+    <span id="nav-username"></span>
+    &nbsp;|&nbsp;
+    <a href="#" onclick="logout()" style="color:#666;font-size:12px">로그아웃</a>
+  </div>
+</nav>
+
+<!-- ====== 로그인/회원가입 섹션 ====== -->
+<div id="auth-section">
+  <div class="login-wrap">
+    <!-- 로그인 -->
+    <div id="login-form">
+      <div class="login-title">GP 모의투자</div>
+      <div class="login-sub">실전 같은 모의투자를 경험하세요</div>
+      <div id="login-alert"></div>
+      <div class="card">
+        <div class="form-group">
+          <label>아이디</label>
+          <input id="login-id" type="text" placeholder="아이디 입력" />
+        </div>
+        <div class="form-group">
+          <label>비밀번호</label>
+          <input id="login-pw" type="password" placeholder="비밀번호 입력"
+            onkeydown="if(event.key==='Enter') doLogin()" />
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doLogin()">로그인</button>
+      </div>
+      <div class="login-toggle">
+        계정이 없으신가요? <a onclick="toggleAuth('register')">회원가입</a>
+      </div>
+    </div>
+
+    <!-- 회원가입 -->
+    <div id="register-form" style="display:none">
+      <div class="login-title">회원가입</div>
+      <div class="login-sub">시작 자산 1,000만원이 지급됩니다</div>
+      <div id="register-alert"></div>
+      <div class="card">
+        <div class="form-group">
+          <label>아이디</label>
+          <input id="reg-id" type="text" placeholder="아이디 입력" />
+        </div>
+        <div class="form-group">
+          <label>비밀번호</label>
+          <input id="reg-pw" type="password" placeholder="비밀번호 입력" />
+        </div>
+        <div class="form-group">
+          <label>이름</label>
+          <input id="reg-name" type="text" placeholder="이름 입력" />
+        </div>
+        <div class="form-group">
+          <label>이메일</label>
+          <input id="reg-email" type="email" placeholder="이메일 입력" />
+        </div>
+        <button class="btn btn-primary btn-full" onclick="doRegister()">회원가입</button>
+      </div>
+      <div class="login-toggle">
+        이미 계정이 있으신가요? <a onclick="toggleAuth('login')">로그인</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== 메인 앱 섹션 ====== -->
+<div id="app-section" style="display:none">
+
+  <!-- 홈 대시보드 -->
+  <div id="section-dashboard" class="section active container">
+    <div id="dashboard-alert"></div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">내 계좌 현황</div>
+        <div class="grid-3">
+          <div class="stat-box">
+            <div class="stat-label">총 자산</div>
+            <div class="stat-value neutral" id="d-balance">-</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">매수 가능 현금</div>
+            <div class="stat-value neutral" id="d-cash">-</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">수익률</div>
+            <div class="stat-value" id="d-profit">-</div>
+          </div>
+        </div>
+        <br>
+        <button class="btn btn-outline btn-sm" onclick="loadDashboard()">↻ 새로고침</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">빠른 시세 조회</div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <input id="quick-code" type="text" placeholder="종목코드 (예: 005930)"
+            style="flex:1" onkeydown="if(event.key==='Enter') quickPrice()" />
+          <button class="btn btn-primary btn-sm" onclick="quickPrice()">조회</button>
+        </div>
+        <div id="quick-result"></div>
+        <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:6px">
+          <button class="btn btn-outline btn-sm" onclick="setQuick('005930')">삼성전자</button>
+          <button class="btn btn-outline btn-sm" onclick="setQuick('000660')">SK하이닉스</button>
+          <button class="btn btn-outline btn-sm" onclick="setQuick('035420')">NAVER</button>
+          <button class="btn btn-outline btn-sm" onclick="setQuick('035720')">카카오</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">보유 종목</div>
+      <div id="d-holdings"></div>
+    </div>
+  </div>
+
+  <!-- 주식 시세 -->
+  <div id="section-stocks" class="section container">
+    <div class="card">
+      <div class="card-title">종목 검색</div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <input id="stock-search" type="text" placeholder="종목명 또는 코드 검색"
+          style="flex:1" onkeydown="if(event.key==='Enter') searchStocks()" />
+        <button class="btn btn-primary" onclick="searchStocks()">검색</button>
+        <button class="btn btn-outline" onclick="searchStocks('')">전체</button>
+      </div>
+      <div id="stock-list"></div>
+    </div>
+
+    <div class="card" id="stock-detail-card" style="display:none">
+      <div class="card-title" id="stock-detail-title">종목 상세</div>
+      <div id="stock-detail"></div>
+    </div>
+  </div>
+
+  <!-- 매수/매도 -->
+  <div id="section-trade" class="section container">
+    <div id="trade-alert"></div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title" style="color:#e53e3e">📈 매수 주문</div>
+        <div class="form-group">
+          <label>계좌 번호</label>
+          <select id="buy-account"></select>
+        </div>
+        <div class="form-group">
+          <label>종목 코드</label>
+          <div style="display:flex;gap:8px">
+            <input id="buy-code" type="text" placeholder="예: 005930" style="flex:1" />
+            <button class="btn btn-outline btn-sm" onclick="fillBuyPrice()">현재가</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>주문 단가 (원)</label>
+          <input id="buy-price" type="number" placeholder="가격 입력" />
+        </div>
+        <div class="form-group">
+          <label>수량 (주)</label>
+          <input id="buy-qty" type="number" placeholder="수량 입력" min="1" />
+        </div>
+        <div id="buy-total" style="font-size:13px;color:#888;margin-bottom:12px"></div>
+        <button class="btn btn-success btn-full" onclick="placeOrder('매수')">매수 주문</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title" style="color:#4299e1">📉 매도 주문</div>
+        <div class="form-group">
+          <label>계좌 번호</label>
+          <select id="sell-account"></select>
+        </div>
+        <div class="form-group">
+          <label>종목 코드</label>
+          <div style="display:flex;gap:8px">
+            <input id="sell-code" type="text" placeholder="예: 005930" style="flex:1" />
+            <button class="btn btn-outline btn-sm" onclick="fillSellPrice()">현재가</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>주문 단가 (원)</label>
+          <input id="sell-price" type="number" placeholder="가격 입력" />
+        </div>
+        <div class="form-group">
+          <label>수량 (주)</label>
+          <input id="sell-qty" type="number" placeholder="수량 입력" min="1" />
+        </div>
+        <div id="sell-total" style="font-size:13px;color:#888;margin-bottom:12px"></div>
+        <button class="btn btn-danger btn-full" onclick="placeOrder('매도')">매도 주문</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">주문 내역</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <select id="order-account" style="width:180px"></select>
+        <button class="btn btn-outline btn-sm" onclick="loadOrders()">조회</button>
+      </div>
+      <div id="order-list"></div>
+    </div>
+  </div>
+
+  <!-- 포트폴리오 -->
+  <div id="section-portfolio" class="section container">
+    <div class="card">
+      <div class="card-title">보유 종목 현황</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <select id="portfolio-account" style="width:180px"></select>
+        <button class="btn btn-outline btn-sm" onclick="loadPortfolio()">조회</button>
+      </div>
+      <div id="portfolio-list"></div>
+    </div>
+  </div>
+
+  <!-- 랭킹 -->
+  <div id="section-ranking" class="section container">
+    <div class="card">
+      <div class="card-title">🏆 수익률 랭킹</div>
+      <div id="ranking-list"></div>
+    </div>
+  </div>
+
+  <!-- 뉴스 -->
+  <div id="section-news" class="section container">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">📰 시장 뉴스</div>
+        <div id="market-news"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">종목별 뉴스</div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <input id="news-code" type="text" placeholder="종목코드" style="flex:1" />
+          <button class="btn btn-outline btn-sm" onclick="loadSymbolNews()">조회</button>
+        </div>
+        <div id="symbol-news"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 커뮤니티 -->
+  <div id="section-community" class="section container">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">💬 게시판</div>
+        <div style="margin-bottom:12px">
+          <button class="btn btn-primary btn-sm" onclick="toggleWriteForm()">✏ 글쓰기</button>
+        </div>
+        <div id="write-form" style="display:none;margin-bottom:16px">
+          <div class="form-group">
+            <label>제목</label>
+            <input id="post-title" type="text" placeholder="제목 입력" />
+          </div>
+          <div class="form-group">
+            <label>내용</label>
+            <textarea id="post-content" rows="4"
+              style="width:100%;padding:10px 14px;background:#0f1117;border:1px solid #2a2d3e;border-radius:8px;color:#e0e0e0;font-size:14px;resize:vertical;outline:none"
+              placeholder="내용 입력"></textarea>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="submitPost()">등록</button>
+          <button class="btn btn-outline btn-sm" onclick="toggleWriteForm()" style="margin-left:8px">취소</button>
+        </div>
+        <div id="post-list"></div>
+      </div>
+
+      <div class="card" id="post-detail-card" style="display:none">
+        <div class="card-title" id="post-detail-title">게시글</div>
+        <div id="post-detail"></div>
+        <div style="margin-top:16px">
+          <div style="display:flex;gap:8px">
+            <input id="comment-input" type="text" placeholder="댓글 입력"
+              style="flex:1" onkeydown="if(event.key==='Enter') submitComment()" />
+            <button class="btn btn-primary btn-sm" onclick="submitComment()">등록</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const API = 'https://gp-mock-inv.onrender.com';
+  let token = localStorage.getItem('gp_token') || '';
+  let currentUser = JSON.parse(localStorage.getItem('gp_user') || 'null');
+  let accounts = [];
+  let currentPostId = null;
+
+  /* ──────────────────── 유틸 ──────────────────── */
+  const fmt = n => Number(n).toLocaleString('ko-KR') + '원';
+  const fmtRate = r => {
+    const v = parseFloat(r);
+    const s = v >= 0 ? '+' : '';
+    return `${s}${v.toFixed(2)}%`;
+  };
+  function colorClass(v) {
+    return parseFloat(v) > 0 ? 'price-up' : parseFloat(v) < 0 ? 'price-down' : 'price-neutral';
+  }
+
+  async function api(method, path, body) {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(API + path, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || '오류가 발생했습니다.');
+    return data;
+  }
+
+  function showAlert(id, msg, type = 'error') {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+    setTimeout(() => { el.innerHTML = ''; }, 4000);
+  }
+
+  /* ──────────────────── 화면 전환 ──────────────────── */
+  function showSection(name) {
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('section-' + name).classList.add('active');
+    const tabs = ['dashboard','stocks','trade','portfolio','ranking','news','community'];
+    const idx = tabs.indexOf(name);
+    document.querySelectorAll('.nav-tab')[idx].classList.add('active');
+
+    if (name === 'dashboard') loadDashboard();
+    if (name === 'stocks') searchStocks('');
+    if (name === 'trade') loadAccountSelects();
+    if (name === 'portfolio') loadPortfolioAccounts();
+    if (name === 'ranking') loadRanking();
+    if (name === 'news') { loadMarketNews(); }
+    if (name === 'community') loadPosts();
+  }
+
+  /* ──────────────────── 인증 ──────────────────── */
+  function toggleAuth(mode) {
+    document.getElementById('login-form').style.display = mode === 'login' ? 'block' : 'none';
+    document.getElementById('register-form').style.display = mode === 'register' ? 'block' : 'none';
+  }
+
+  async function doLogin() {
+    const login_id = document.getElementById('login-id').value.trim();
+    const passwd = document.getElementById('login-pw').value;
+    try {
+      const data = await api('POST', '/api/users/login', { login_id, passwd });
+      token = data.access_token;
+      localStorage.setItem('gp_token', token);
+      const me = await api('GET', '/api/users/me');
+      currentUser = me;
+      localStorage.setItem('gp_user', JSON.stringify(me));
+      onLoggedIn();
+    } catch (e) { showAlert('login-alert', e.message); }
+  }
+
+  async function doRegister() {
+    const login_id = document.getElementById('reg-id').value.trim();
+    const passwd = document.getElementById('reg-pw').value;
+    const user_name = document.getElementById('reg-name').value.trim();
+    const email = document.getElementById('reg-email').value.trim();
+    try {
+      await api('POST', '/api/users/register', { login_id, passwd, user_name, email });
+      showAlert('register-alert', '회원가입 완료! 로그인해주세요.', 'success');
+      setTimeout(() => toggleAuth('login'), 1500);
+    } catch (e) { showAlert('register-alert', e.message); }
+  }
+
+  function onLoggedIn() {
+    document.getElementById('auth-section').style.display = 'none';
+    document.getElementById('app-section').style.display = 'block';
+    document.getElementById('navbar').style.display = 'flex';
+    document.getElementById('nav-username').textContent = currentUser?.user_name || '';
+    showSection('dashboard');
+  }
+
+  function logout() {
+    token = ''; currentUser = null;
+    localStorage.removeItem('gp_token');
+    localStorage.removeItem('gp_user');
+    document.getElementById('app-section').style.display = 'none';
+    document.getElementById('navbar').style.display = 'none';
+    document.getElementById('auth-section').style.display = 'block';
+  }
+
+  /* ──────────────────── 대시보드 ──────────────────── */
+  async function loadDashboard() {
+    try {
+      accounts = await api('GET', '/api/trading/accounts');
+      if (!accounts.length) { document.getElementById('d-balance').textContent = '계좌 없음'; return; }
+      const acc = accounts[0];
+      document.getElementById('d-balance').textContent = fmt(acc.balance);
+      document.getElementById('d-cash').textContent = fmt(acc.withdrawable_cash);
+      const profit = ((acc.balance - 10000000) / 10000000 * 100).toFixed(2);
+      const el = document.getElementById('d-profit');
+      el.textContent = fmtRate(profit);
+      el.className = 'stat-value ' + (profit > 0 ? 'up' : profit < 0 ? 'down' : 'neutral');
+      loadHoldings(acc.account_id);
+    } catch(e) { console.error(e); }
+  }
+
+  async function loadHoldings(accountId) {
+    const el = document.getElementById('d-holdings');
+    try {
+      const data = await api('GET', `/api/trading/portfolio?account_id=${accountId}`);
+      if (!data.holdings.length) { el.innerHTML = '<div class="empty">보유 종목이 없습니다.</div>'; return; }
+      el.innerHTML = `
+        <table>
+          <thead><tr><th>종목코드</th><th>종목명</th><th>평균단가</th><th>보유수량</th><th>평가금액</th></tr></thead>
+          <tbody>
+            ${data.holdings.map(h => `
+              <tr>
+                <td>${h.symbol_code}</td>
+                <td>${h.security_name}</td>
+                <td>${fmt(h.avg_price)}</td>
+                <td>${h.hold_quantity}주</td>
+                <td>${fmt(h.total_value)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    } catch(e) { el.innerHTML = '<div class="empty">불러오기 실패</div>'; }
+  }
+
+  /* ──────────────────── 빠른 시세 ──────────────────── */
+  function setQuick(code) {
+    document.getElementById('quick-code').value = code;
+    quickPrice();
+  }
+
+  async function quickPrice() {
+    const code = document.getElementById('quick-code').value.trim();
+    if (!code) return;
+    const el = document.getElementById('quick-result');
+    el.innerHTML = '<div class="loading"><span class="spinner"></span>조회 중...</div>';
+    try {
+      const d = await api('GET', `/api/stocks/${code}/price`);
+      const cls = d.change_rate > 0 ? 'price-up' : d.change_rate < 0 ? 'price-down' : 'price-neutral';
+      el.innerHTML = `
+        <div style="padding:12px;background:#0f1117;border-radius:8px">
+          <div style="font-size:24px;font-weight:700;class='${cls}'">${fmt(d.current_price)}</div>
+          <div class="${cls}" style="font-size:14px;margin-top:4px">${fmtRate(d.change_rate)}</div>
+          <div style="display:flex;gap:16px;margin-top:8px;font-size:12px;color:#666">
+            <span>고 ${fmt(d.high)}</span>
+            <span>저 ${fmt(d.low)}</span>
+            <span>거래량 ${Number(d.volume).toLocaleString()}</span>
+          </div>
+        </div>`;
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  /* ──────────────────── 주식 검색 ──────────────────── */
+  async function searchStocks(q) {
+    const query = q !== undefined ? q : document.getElementById('stock-search').value.trim();
+    const el = document.getElementById('stock-list');
+    el.innerHTML = '<div class="loading"><span class="spinner"></span>검색 중...</div>';
+    try {
+      const params = query ? `?search=${encodeURIComponent(query)}` : '';
+      const list = await api('GET', `/api/stocks${params}`);
+      if (!list.length) { el.innerHTML = '<div class="empty">검색 결과가 없습니다.</div>'; return; }
+      el.innerHTML = `
+        <table>
+          <thead><tr><th>코드</th><th>종목명</th><th>시장구분</th><th>업종</th><th></th></tr></thead>
+          <tbody>
+            ${list.map(s => `
+              <tr>
+                <td style="font-family:monospace">${s.symbol_code}</td>
+                <td>${s.name}</td>
+                <td>${s.market_type}</td>
+                <td>${s.sector_code || '-'}</td>
+                <td><button class="btn btn-outline btn-sm" onclick="showStockDetail('${s.symbol_code}','${s.name}')">시세</button></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  async function showStockDetail(code, name) {
+    const card = document.getElementById('stock-detail-card');
+    const el = document.getElementById('stock-detail');
+    document.getElementById('stock-detail-title').textContent = `${name} (${code})`;
+    card.style.display = 'block';
+    el.innerHTML = '<div class="loading"><span class="spinner"></span>불러오는 중...</div>';
+    card.scrollIntoView({ behavior: 'smooth' });
+    try {
+      const d = await api('GET', `/api/stocks/${code}/price`);
+      const cls = d.change_rate > 0 ? 'price-up' : d.change_rate < 0 ? 'price-down' : 'price-neutral';
+      el.innerHTML = `
+        <div class="grid-3" style="margin-bottom:16px">
+          <div class="stat-box">
+            <div class="stat-label">현재가</div>
+            <div class="stat-value ${cls}">${fmt(d.current_price)}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">등락률</div>
+            <div class="stat-value ${cls}">${fmtRate(d.change_rate)}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">거래량</div>
+            <div class="stat-value neutral">${Number(d.volume).toLocaleString()}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-success btn-sm" onclick="goTrade('${code}','${d.current_price}','매수')">매수하기</button>
+          <button class="btn btn-danger btn-sm" onclick="goTrade('${code}','${d.current_price}','매도')">매도하기</button>
+        </div>`;
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  function goTrade(code, price, type) {
+    showSection('trade');
+    if (type === '매수') {
+      document.getElementById('buy-code').value = code;
+      document.getElementById('buy-price').value = price;
+    } else {
+      document.getElementById('sell-code').value = code;
+      document.getElementById('sell-price').value = price;
+    }
+    updateTotal(type === '매수' ? 'buy' : 'sell');
+  }
+
+  /* ──────────────────── 매수/매도 ──────────────────── */
+  async function loadAccountSelects() {
+    try {
+      accounts = await api('GET', '/api/trading/accounts');
+      ['buy-account','sell-account','order-account'].forEach(id => {
+        const sel = document.getElementById(id);
+        sel.innerHTML = accounts.map(a =>
+          `<option value="${a.account_id}">[${a.account_id}] ${a.account_name} (${fmt(a.withdrawable_cash)})</option>`
+        ).join('');
+      });
+    } catch(e) {}
+  }
+
+  function updateTotal(side) {
+    const price = parseFloat(document.getElementById(side+'-price').value) || 0;
+    const qty = parseInt(document.getElementById(side+'-qty').value) || 0;
+    const total = price * qty;
+    document.getElementById(side+'-total').textContent =
+      total ? `주문 금액: ${fmt(total)}` : '';
+  }
+  document.addEventListener('input', e => {
+    if (['buy-price','buy-qty'].includes(e.target.id)) updateTotal('buy');
+    if (['sell-price','sell-qty'].includes(e.target.id)) updateTotal('sell');
+  });
+
+  async function fillBuyPrice() {
+    const code = document.getElementById('buy-code').value.trim();
+    if (!code) return;
+    try {
+      const d = await api('GET', `/api/stocks/${code}/price`);
+      document.getElementById('buy-price').value = d.current_price;
+      updateTotal('buy');
+    } catch(e) { showAlert('trade-alert', '현재가 조회 실패: ' + e.message); }
+  }
+
+  async function fillSellPrice() {
+    const code = document.getElementById('sell-code').value.trim();
+    if (!code) return;
+    try {
+      const d = await api('GET', `/api/stocks/${code}/price`);
+      document.getElementById('sell-price').value = d.current_price;
+      updateTotal('sell');
+    } catch(e) { showAlert('trade-alert', '현재가 조회 실패: ' + e.message); }
+  }
+
+  async function placeOrder(order_type) {
+    const isBuy = order_type === '매수';
+    const prefix = isBuy ? 'buy' : 'sell';
+    const account_id = parseInt(document.getElementById(prefix+'-account').value);
+    const symbol_code = document.getElementById(prefix+'-code').value.trim();
+    const price = parseFloat(document.getElementById(prefix+'-price').value);
+    const quantity = parseInt(document.getElementById(prefix+'-qty').value);
+    if (!symbol_code || !price || !quantity) { showAlert('trade-alert', '모든 항목을 입력하세요.'); return; }
+    try {
+      const res = await api('POST', '/api/trading/orders', { account_id, symbol_code, order_type, price, quantity });
+      showAlert('trade-alert', res.message || `${order_type} 완료!`, 'success');
+      loadAccountSelects();
+    } catch(e) { showAlert('trade-alert', e.message); }
+  }
+
+  async function loadOrders() {
+    const account_id = document.getElementById('order-account').value;
+    const el = document.getElementById('order-list');
+    try {
+      const list = await api('GET', `/api/trading/orders?account_id=${account_id}`);
+      if (!list.length) { el.innerHTML = '<div class="empty">주문 내역이 없습니다.</div>'; return; }
+      el.innerHTML = `
+        <table>
+          <thead><tr><th>종목</th><th>구분</th><th>단가</th><th>수량</th><th>상태</th><th>시간</th></tr></thead>
+          <tbody>
+            ${list.map(o => `
+              <tr>
+                <td>${o.symbol_code}</td>
+                <td><span class="badge ${o.order_type==='매수'?'badge-buy':'badge-sell'}">${o.order_type}</span></td>
+                <td>${fmt(o.price)}</td>
+                <td>${o.quantity}주</td>
+                <td>${o.status}</td>
+                <td style="font-size:12px;color:#666">${new Date(o.created_at).toLocaleString('ko-KR')}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  /* ──────────────────── 포트폴리오 ──────────────────── */
+  async function loadPortfolioAccounts() {
+    try {
+      accounts = await api('GET', '/api/trading/accounts');
+      const sel = document.getElementById('portfolio-account');
+      sel.innerHTML = accounts.map(a =>
+        `<option value="${a.account_id}">[${a.account_id}] ${a.account_name}</option>`
+      ).join('');
+      if (accounts.length) loadPortfolio();
+    } catch(e) {}
+  }
+
+  async function loadPortfolio() {
+    const account_id = document.getElementById('portfolio-account').value;
+    const el = document.getElementById('portfolio-list');
+    el.innerHTML = '<div class="loading"><span class="spinner"></span>불러오는 중...</div>';
+    try {
+      const data = await api('GET', `/api/trading/portfolio?account_id=${account_id}`);
+      const profitRate = ((data.balance - 10000000) / 10000000 * 100).toFixed(2);
+      const cls = profitRate > 0 ? 'up' : profitRate < 0 ? 'down' : 'neutral';
+      let html = `
+        <div class="grid-3" style="margin-bottom:16px">
+          <div class="stat-box"><div class="stat-label">총 자산</div><div class="stat-value neutral">${fmt(data.balance)}</div></div>
+          <div class="stat-box"><div class="stat-label">매수 가능 현금</div><div class="stat-value neutral">${fmt(data.withdrawable_cash)}</div></div>
+          <div class="stat-box"><div class="stat-label">수익률</div><div class="stat-value ${cls}">${fmtRate(profitRate)}</div></div>
+        </div>`;
+      if (!data.holdings.length) {
+        html += '<div class="empty">보유 종목이 없습니다.</div>';
+      } else {
+        html += `
+          <table>
+            <thead><tr><th>코드</th><th>종목명</th><th>평균단가</th><th>수량</th><th>평가금액</th></tr></thead>
+            <tbody>
+              ${data.holdings.map(h => `
+                <tr>
+                  <td>${h.symbol_code}</td>
+                  <td>${h.security_name}</td>
+                  <td>${fmt(h.avg_price)}</td>
+                  <td>${h.hold_quantity}주</td>
+                  <td>${fmt(h.total_value)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>`;
+      }
+      el.innerHTML = html;
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  /* ──────────────────── 랭킹 ──────────────────── */
+  async function loadRanking() {
+    const el = document.getElementById('ranking-list');
+    el.innerHTML = '<div class="loading"><span class="spinner"></span>불러오는 중...</div>';
+    try {
+      const list = await api('GET', '/api/ranking?limit=20');
+      if (!list.length) { el.innerHTML = '<div class="empty">데이터 없음</div>'; return; }
+      el.innerHTML = `
+        <table>
+          <thead><tr><th>순위</th><th>닉네임</th><th>총 자산</th><th>수익률</th></tr></thead>
+          <tbody>
+            ${list.map(r => {
+              const rankCls = r.rank <= 3 ? `rank-${r.rank}` : '';
+              const cls = r.profit_rate > 0 ? 'price-up' : r.profit_rate < 0 ? 'price-down' : 'price-neutral';
+              return `
+                <tr>
+                  <td><span class="rank-num ${rankCls}">${r.rank}</span></td>
+                  <td>${r.user_name}</td>
+                  <td>${fmt(r.total_balance)}</td>
+                  <td class="${cls}">${fmtRate(r.profit_rate)}</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  /* ──────────────────── 뉴스 ──────────────────── */
+  async function loadMarketNews() {
+    const el = document.getElementById('market-news');
+    el.innerHTML = '<div class="loading"><span class="spinner"></span>불러오는 중...</div>';
+    try {
+      const list = await api('GET', '/api/news/market');
+      if (!list.length) { el.innerHTML = '<div class="empty">뉴스가 없습니다.</div>'; return; }
+      el.innerHTML = list.map(n => `
+        <div class="news-item">
+          <div class="news-title"><a href="${n.url}" target="_blank">${n.title}</a></div>
+          <div class="news-meta">${n.date}</div>
+        </div>`).join('');
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  async function loadSymbolNews() {
+    const code = document.getElementById('news-code').value.trim();
+    if (!code) return;
+    const el = document.getElementById('symbol-news');
+    el.innerHTML = '<div class="loading"><span class="spinner"></span>불러오는 중...</div>';
+    try {
+      const list = await api('GET', `/api/news/${code}`);
+      if (!list.length) { el.innerHTML = '<div class="empty">뉴스가 없습니다.</div>'; return; }
+      el.innerHTML = list.map(n => `
+        <div class="news-item">
+          <div class="news-title"><a href="${n.url}" target="_blank">${n.title}</a></div>
+          <div class="news-meta">${n.date} ${n.source ? '· ' + n.source : ''}</div>
+        </div>`).join('');
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  /* ──────────────────── 커뮤니티 ──────────────────── */
+  async function loadPosts() {
+    const el = document.getElementById('post-list');
+    el.innerHTML = '<div class="loading"><span class="spinner"></span>불러오는 중...</div>';
+    try {
+      const data = await api('GET', '/api/community/posts');
+      if (!data.items.length) { el.innerHTML = '<div class="empty">게시글이 없습니다.</div>'; return; }
+      el.innerHTML = data.items.map(p => `
+        <div class="news-item" style="cursor:pointer" onclick="loadPost(${p.post_id},'${p.title.replace(/'/g,'&#39;')}')">
+          <div class="news-title">${p.title}</div>
+          <div class="news-meta">${p.author_name} · ${new Date(p.created_at).toLocaleDateString('ko-KR')} · 좋아요 ${p.like_count} · 댓글 ${p.comment_count}</div>
+        </div>`).join('');
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  async function loadPost(postId, title) {
+    currentPostId = postId;
+    const card = document.getElementById('post-detail-card');
+    const el = document.getElementById('post-detail');
+    document.getElementById('post-detail-title').textContent = title;
+    card.style.display = 'block';
+    try {
+      const p = await api('GET', `/api/community/posts/${postId}`);
+      el.innerHTML = `
+        <div style="font-size:14px;color:#c0c0c0;margin-bottom:16px;line-height:1.6">${p.content}</div>
+        <div style="font-size:12px;color:#555;margin-bottom:16px">${p.author_name} · 좋아요 ${p.like_count}</div>
+        <button class="btn btn-outline btn-sm" onclick="toggleLike(${postId})">♡ 좋아요</button>
+        <hr style="border-color:#2a2d3e;margin:16px 0">
+        <div id="comments-${postId}">
+          ${p.comments.length ? p.comments.map(c => `
+            <div style="padding:8px 0;border-bottom:1px solid #1e2130">
+              <span style="font-size:12px;color:#4f8ef7">${c.author_name}</span>
+              <span style="font-size:13px;color:#c0c0c0;margin-left:8px">${c.content}</span>
+            </div>`).join('') : '<div style="color:#555;font-size:13px">댓글이 없습니다.</div>'}
+        </div>`;
+    } catch(e) { el.innerHTML = `<div class="alert alert-error">${e.message}</div>`; }
+  }
+
+  async function toggleLike(postId) {
+    try {
+      const res = await api('POST', `/api/community/posts/${postId}/like`);
+      showAlert('', res.message, 'success');
+    } catch(e) {}
+  }
+
+  function toggleWriteForm() {
+    const f = document.getElementById('write-form');
+    f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  }
+
+  async function submitPost() {
+    const title = document.getElementById('post-title').value.trim();
+    const content = document.getElementById('post-content').value.trim();
+    if (!title || !content) return;
+    try {
+      await api('POST', '/api/community/posts', { title, content });
+      document.getElementById('post-title').value = '';
+      document.getElementById('post-content').value = '';
+      toggleWriteForm();
+      loadPosts();
+    } catch(e) {}
+  }
+
+  async function submitComment() {
+    const content = document.getElementById('comment-input').value.trim();
+    if (!content || !currentPostId) return;
+    try {
+      await api('POST', `/api/community/posts/${currentPostId}/comments`, { content });
+      document.getElementById('comment-input').value = '';
+      loadPost(currentPostId, '');
+    } catch(e) {}
+  }
+
+  /* ──────────────────── 초기화 ──────────────────── */
+  if (token && currentUser) {
+    onLoggedIn();
+  }
+</script>
+</body>
+</html>
