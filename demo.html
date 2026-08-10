@@ -606,39 +606,91 @@
     document.getElementById('auth-section').style.display = 'block';
   }
 
+  /* ──────────────────── 현재가 일괄 조회 ──────────────────── */
+  // 보유 종목 목록을 받아 각 종목의 현재가를 조회하고
+  // { symbol_code: 현재가 } 형태의 Map을 반환합니다.
+  async function fetchCurrentPrices(holdings) {
+    const priceMap = {};
+    await Promise.all(
+      holdings.map(async h => {
+        try {
+          const d = await api('GET', `/api/stocks/${h.symbol_code}/price`);
+          priceMap[h.symbol_code] = parseFloat(d.current_price);
+        } catch(e) {
+          // 현재가 조회 실패 시 평균단가로 대체 (수익률 0%로 표시)
+          priceMap[h.symbol_code] = parseFloat(h.avg_price);
+        }
+      })
+    );
+    return priceMap;
+  }
+
   /* ──────────────────── 대시보드 ──────────────────── */
   async function loadDashboard() {
     try {
       accounts = await api('GET', '/api/trading/accounts');
       if (!accounts.length) { document.getElementById('d-balance').textContent = '계좌 없음'; return; }
       const acc = accounts[0];
-      document.getElementById('d-balance').textContent = fmt(acc.balance);
       document.getElementById('d-cash').textContent = fmt(acc.withdrawable_cash);
-      const profit = ((acc.balance - 10000000) / 10000000 * 100).toFixed(2);
-      const el = document.getElementById('d-profit');
-      el.textContent = fmtRate(profit);
-      el.className = 'stat-value ' + (profit > 0 ? 'up' : profit < 0 ? 'down' : 'neutral');
-      loadHoldings(acc.account_id);
+      loadHoldings(acc.account_id, acc.withdrawable_cash);
     } catch(e) { console.error(e); }
   }
 
-  async function loadHoldings(accountId) {
+  async function loadHoldings(accountId, cash) {
     const el = document.getElementById('d-holdings');
     try {
       const data = await api('GET', `/api/trading/portfolio?account_id=${accountId}`);
-      if (!data.holdings.length) { el.innerHTML = '<div class="empty">보유 종목이 없습니다.</div>'; return; }
+
+      if (!data.holdings.length) {
+        // 보유 종목 없으면 현금 = 총 자산
+        document.getElementById('d-balance').textContent = fmt(cash);
+        const el2 = document.getElementById('d-profit');
+        const profitRate = ((cash - 10000000) / 10000000 * 100).toFixed(2);
+        el2.textContent = fmtRate(profitRate);
+        el2.className = 'stat-value ' + (profitRate > 0 ? 'up' : profitRate < 0 ? 'down' : 'neutral');
+        el.innerHTML = '<div class="empty">보유 종목이 없습니다.</div>';
+        return;
+      }
+
+      // 보유 종목별 현재가 조회
+      const priceMap = await fetchCurrentPrices(data.holdings);
+
+      // 주식 평가금액 합산 (현재가 × 수량)
+      let stockValue = 0;
+      data.holdings.forEach(h => {
+        stockValue += priceMap[h.symbol_code] * h.hold_quantity;
+      });
+
+      // 총 자산 = 현금 + 주식 평가금액
+      const totalAsset = cash + stockValue;
+      // 수익률 = (총 자산 - 시드머니) / 시드머니 × 100
+      const profitRate = ((totalAsset - 10000000) / 10000000 * 100).toFixed(2);
+
+      document.getElementById('d-balance').textContent = fmt(totalAsset);
+      const profitEl = document.getElementById('d-profit');
+      profitEl.textContent = fmtRate(profitRate);
+      profitEl.className = 'stat-value ' + (profitRate > 0 ? 'up' : profitRate < 0 ? 'down' : 'neutral');
+
+      // 보유 종목 테이블 (현재가·수익률 컬럼 추가)
       el.innerHTML = `
         <table>
-          <thead><tr><th>종목코드</th><th>종목명</th><th>평균단가</th><th>보유수량</th><th>평가금액</th></tr></thead>
+          <thead><tr><th>종목코드</th><th>종목명</th><th>평균단가</th><th>현재가</th><th>수익률</th><th>수량</th><th>평가금액</th></tr></thead>
           <tbody>
-            ${data.holdings.map(h => `
+            ${data.holdings.map(h => {
+              const cur = priceMap[h.symbol_code];
+              const rate = ((cur - h.avg_price) / h.avg_price * 100).toFixed(2);
+              const cls = rate > 0 ? 'price-up' : rate < 0 ? 'price-down' : 'price-neutral';
+              return `
               <tr>
                 <td>${h.symbol_code}</td>
                 <td>${h.security_name}</td>
                 <td>${fmt(h.avg_price)}</td>
+                <td class="${cls}">${fmt(cur)}</td>
+                <td class="${cls}">${fmtRate(rate)}</td>
                 <td>${h.hold_quantity}주</td>
-                <td>${fmt(h.total_value)}</td>
-              </tr>`).join('')}
+                <td>${fmt(cur * h.hold_quantity)}</td>
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>`;
     } catch(e) { el.innerHTML = '<div class="empty">불러오기 실패</div>'; }
@@ -843,29 +895,54 @@
     el.innerHTML = '<div class="loading"><span class="spinner"></span>불러오는 중...</div>';
     try {
       const data = await api('GET', `/api/trading/portfolio?account_id=${account_id}`);
-      const profitRate = ((data.balance - 10000000) / 10000000 * 100).toFixed(2);
+      const cash = data.withdrawable_cash;
+
+      let totalAsset = cash;
+      let stockValue = 0;
+      let priceMap = {};
+
+      if (data.holdings.length) {
+        // 보유 종목별 현재가 조회
+        priceMap = await fetchCurrentPrices(data.holdings);
+        data.holdings.forEach(h => {
+          stockValue += priceMap[h.symbol_code] * h.hold_quantity;
+        });
+        totalAsset = cash + stockValue;
+      }
+
+      // 수익률 = (총 자산 - 시드머니) / 시드머니 × 100
+      const profitRate = ((totalAsset - 10000000) / 10000000 * 100).toFixed(2);
       const cls = profitRate > 0 ? 'up' : profitRate < 0 ? 'down' : 'neutral';
+
       let html = `
         <div class="grid-3" style="margin-bottom:16px">
-          <div class="stat-box"><div class="stat-label">총 자산</div><div class="stat-value neutral">${fmt(data.balance)}</div></div>
-          <div class="stat-box"><div class="stat-label">매수 가능 현금</div><div class="stat-value neutral">${fmt(data.withdrawable_cash)}</div></div>
+          <div class="stat-box"><div class="stat-label">총 자산</div><div class="stat-value neutral">${fmt(totalAsset)}</div></div>
+          <div class="stat-box"><div class="stat-label">매수 가능 현금</div><div class="stat-value neutral">${fmt(cash)}</div></div>
           <div class="stat-box"><div class="stat-label">수익률</div><div class="stat-value ${cls}">${fmtRate(profitRate)}</div></div>
         </div>`;
+
       if (!data.holdings.length) {
         html += '<div class="empty">보유 종목이 없습니다.</div>';
       } else {
         html += `
           <table>
-            <thead><tr><th>코드</th><th>종목명</th><th>평균단가</th><th>수량</th><th>평가금액</th></tr></thead>
+            <thead><tr><th>코드</th><th>종목명</th><th>평균단가</th><th>현재가</th><th>수익률</th><th>수량</th><th>평가금액</th></tr></thead>
             <tbody>
-              ${data.holdings.map(h => `
+              ${data.holdings.map(h => {
+                const cur = priceMap[h.symbol_code];
+                const rate = ((cur - h.avg_price) / h.avg_price * 100).toFixed(2);
+                const c = rate > 0 ? 'price-up' : rate < 0 ? 'price-down' : 'price-neutral';
+                return `
                 <tr>
                   <td>${h.symbol_code}</td>
                   <td>${h.security_name}</td>
                   <td>${fmt(h.avg_price)}</td>
+                  <td class="${c}">${fmt(cur)}</td>
+                  <td class="${c}">${fmtRate(rate)}</td>
                   <td>${h.hold_quantity}주</td>
-                  <td>${fmt(h.total_value)}</td>
-                </tr>`).join('')}
+                  <td>${fmt(cur * h.hold_quantity)}</td>
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>`;
       }
