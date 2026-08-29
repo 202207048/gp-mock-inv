@@ -306,7 +306,7 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
                 print(f"[KIS 순위 오류] type={rank_type} status={resp.status_code} body={resp.text}")
                 return []
             raw = resp.json()
-            print(f"[KIS 순위 응답 키] type={rank_type} keys={list(raw.keys())}")
+            print(f"[KIS 순위 응답] type={rank_type} rt_cd={raw.get('rt_cd')} msg={raw.get('msg1')} keys={list(raw.keys())}")
             output = raw.get("output", raw.get("output1", []))
     except Exception as e:
         print(f"[KIS 순위 요청 오류] {e}")
