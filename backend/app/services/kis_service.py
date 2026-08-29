@@ -257,7 +257,8 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
         path = "/uapi/domestic-stock/v1/ranking/fluctuation"
         extra_params = {
             "FID_COND_SCR_DIV_CODE": "20170",
-            "FID_DIV_CLS_CODE": "1",    # 1 = 상승
+            "FID_DIV_CLS_CODE": "1",        # 1 = 상승
+            "FID_RANK_SORT_CLS_CODE": "0",  # 0 = 순위 오름차순
         }
     else:
         # volume 또는 amount 모두 거래량/거래대금 순위 TR 사용
