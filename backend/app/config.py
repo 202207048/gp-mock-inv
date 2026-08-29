@@ -36,11 +36,16 @@ class Settings(BaseSettings):
     # 이 시간이 지나면 자동 로그아웃됨
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-    # 한국투자증권 오픈API 키 (실시간 주가 조회에 필요)
-    # https://apiportal.koreainvestment.com 에서 무료 발급
+    # 한국투자증권 오픈API — 모의투자 키 (시세·차트 조회용)
+    # https://apiportal.koreainvestment.com 에서 발급
     KIS_APP_KEY: str = ""
     KIS_APP_SECRET: str = ""
-    KIS_ACCOUNT_NO: str = ""
+
+    # 한국투자증권 오픈API — 실전투자 키 (순위 조회 전용)
+    # 순위분석 TR(FHPST0171xxxx 등)은 실전 도메인에서만 제공됨
+    # ⚠️ 계좌번호는 저장하지 않음 — 시세·순위 조회에는 불필요하며 유출 리스크를 높임
+    KIS_REAL_APP_KEY: str = ""
+    KIS_REAL_APP_SECRET: str = ""
 
     # AI팀 서버 주소 (AI팀이 서버를 띄우면 그 주소로 변경)
     AI_SERVER_URL: str = "http://localhost:8001"
