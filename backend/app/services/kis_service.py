@@ -251,21 +251,42 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
     if not settings.KIS_REAL_APP_KEY:
         return []
 
-    # 순위 타입별 TR_ID와 엔드포인트 결정
+    # 순위 타입별 TR_ID·엔드포인트·파라미터 결정
     if rank_type == "change":
         tr_id = "FHPST01700000"
         path = "/uapi/domestic-stock/v1/ranking/fluctuation"
-        extra_params = {
+        # fluctuation API 전용 파라미터 (volume-rank와 구조가 다름)
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
             "FID_COND_SCR_DIV_CODE": "20170",
-            "FID_DIV_CLS_CODE": "1",        # 1 = 상승
-            "FID_RANK_SORT_CLS_CODE": "0",  # 0 = 순위 오름차순
+            "FID_INPUT_ISCD": "0000",
+            "FID_RANK_SORT_CLS_CODE": "0",   # 0 = 상승률 순
+            "FID_INPUT_CNT_1": "0",
+            "FID_PRC_CLS_CODE": "0",
+            "FID_INPUT_PRICE_1": "",
+            "FID_INPUT_PRICE_2": "",
+            "FID_VOL_CNT": "",
+            "FID_TRGT_CLS_CODE": "0",
+            "FID_TRGT_EXLS_CLS_CODE": "0",
+            "FID_DIV_CLS_CODE": "0",
+            "FID_RSFL_RATE1": "",
+            "FID_RSFL_RATE2": "",
         }
     else:
-        # volume 또는 amount 모두 거래량/거래대금 순위 TR 사용
+        # volume 또는 amount — 거래량/거래대금 순위 TR 사용
         tr_id = "FHPST01710000"
         path = "/uapi/domestic-stock/v1/quotations/volume-rank"
-        extra_params = {
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
             "FID_COND_SCR_DIV_CODE": "20171",
+            "FID_INPUT_ISCD": "0000",
+            "FID_BLNG_CLS_CODE": "0",
+            "FID_TRGT_CLS_CODE": "111111111",
+            "FID_TRGT_EXLS_CLS_CODE": "000000",
+            "FID_INPUT_PRICE_1": "",
+            "FID_INPUT_PRICE_2": "",
+            "FID_VOL_CNT": "",
+            "FID_INPUT_DATE_1": "",
             "FID_DIV_CLS_CODE": "0",
         }
 
@@ -276,19 +297,6 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
     except Exception as e:
         print(f"[KIS 실전 토큰 오류] {e}")
         return []
-
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_INPUT_ISCD": "0000",        # 0000 = 전체 종목
-        "FID_BLNG_CLS_CODE": "0",
-        "FID_TRGT_CLS_CODE": "111111111",
-        "FID_TRGT_EXLS_CLS_CODE": "000000",
-        "FID_INPUT_PRICE_1": "",
-        "FID_INPUT_PRICE_2": "",
-        "FID_VOL_CNT": "",
-        "FID_INPUT_DATE_1": "",
-        **extra_params,
-    }
 
     try:
         async with httpx.AsyncClient() as client:
