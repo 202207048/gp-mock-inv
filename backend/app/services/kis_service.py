@@ -231,7 +231,7 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
     Args:
         rank_type:
             "volume"   — 거래량 상위 (FHPST01710000)
-            "change"   — 급등 상위   (FHPST01720000, 상승 기준)
+            "change"   — 급등 상위   (FHPST01700000, 상승 기준)
             "amount"   — 거래대금 상위 (FHPST01710000, 거래대금 기준)
         limit: 반환할 종목 수 (최대 30)
 
@@ -253,16 +253,16 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
 
     # 순위 타입별 TR_ID와 엔드포인트 결정
     if rank_type == "change":
-        tr_id = "FHPST01720000"
+        tr_id = "FHPST01700000"
         path = "/uapi/domestic-stock/v1/ranking/fluctuation"
         extra_params = {
-            "FID_COND_SCR_DIV_CODE": "20172",
+            "FID_COND_SCR_DIV_CODE": "20170",
             "FID_DIV_CLS_CODE": "1",    # 1 = 상승
         }
     else:
         # volume 또는 amount 모두 거래량/거래대금 순위 TR 사용
         tr_id = "FHPST01710000"
-        path = "/uapi/domestic-stock/v1/ranking/volume"
+        path = "/uapi/domestic-stock/v1/quotations/volume-rank"
         extra_params = {
             "FID_COND_SCR_DIV_CODE": "20171",
             "FID_DIV_CLS_CODE": "0",
