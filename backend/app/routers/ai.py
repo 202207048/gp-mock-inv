@@ -2,8 +2,8 @@
 routers/ai.py - AI 및 투자성향 설문 API 엔드포인트
 
 제공하는 API:
-    [설문 - 우리 DB와 직접 연동]
-    POST /api/ai/survey             → 설문 답변 저장
+    [설문 + Gemini 분석]
+    POST /api/ai/survey             → 설문 저장 후 Gemini 투자성향 분석
     GET  /api/ai/propensity         → 내 투자성향 분석 결과 조회
 
     [AI 서버 연동 - AI팀 서버가 필요]
@@ -18,6 +18,8 @@ AI팀 서버가 아직 없으면?
 """
 
 from datetime import datetime
+import asyncio
+import json
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +31,7 @@ from app.database import get_db
 from app.models.ai_propensity_advice import AiPropensityAdvice
 from app.models.user import User
 from app.models.user_survey_response import UserSurveyResponse
+from app.services.ai_service import analyze_survey_answers
 from app.utils.deps import get_current_user
 
 # prefix는 main.py에서 /api/ai 로 지정
@@ -92,36 +95,24 @@ class PropensityAdviceResponse(BaseModel):
 # 설문 API (DB 직접 연동 - AI팀 서버 불필요)
 # -----------------------------------------------
 
-@router.post("/survey", summary="투자성향 설문 답변 저장")
-def submit_survey(
+@router.post("/survey", summary="투자성향 설문 저장 및 Gemini 분석")
+async def submit_survey(
     req: SurveySubmitRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    사용자의 투자성향 설문 답변을 저장합니다.
+    설문 답변을 저장한 뒤 Gemini로 투자성향을 분석합니다.
 
     기존 답변이 있으면 덮어씁니다 (재설문 가능).
-
-    요청 예시:
-        POST /api/ai/survey
-        {
-            "answers": [
-                {"question_number": 1, "selected_answer": "30대"},
-                {"question_number": 2, "selected_answer": "시세차익 목적"},
-                {"question_number": 3, "selected_answer": "1년 이상"}
-            ]
-        }
-
-    응답: 저장된 답변 목록
+    분석 결과는 users.investment_style 과 ai_propensity_advice 에 저장됩니다.
     """
-    # 기존 답변 모두 삭제 (재설문 시 깨끗하게 다시 저장)
     db.query(UserSurveyResponse).filter(
         UserSurveyResponse.user_id == current_user.user_id
     ).delete()
 
-    # 새 답변 저장
     saved = []
+    payload = []
     for answer in req.answers:
         response = UserSurveyResponse(
             user_id=current_user.user_id,
@@ -131,14 +122,29 @@ def submit_survey(
         )
         db.add(response)
         saved.append(response)
+        payload.append({
+            "question_number": answer.question_number,
+            "selected_answer": answer.selected_answer,
+        })
 
+    analysis = await asyncio.to_thread(analyze_survey_answers, payload)
+
+    current_user.investment_style = analysis["investor_type"]
+    advice = AiPropensityAdvice(
+        user_id=current_user.user_id,
+        ai_analysis_result=analysis["investor_type"],
+        ai_detailed_advice=json.dumps(analysis, ensure_ascii=False),
+        created_at=datetime.utcnow(),
+    )
+    db.add(advice)
     db.commit()
 
-    # 저장된 답변 개수 반환
     return {
-        "message": f"설문 답변 {len(saved)}개가 저장되었습니다.",
+        "message": f"설문 답변 {len(saved)}개가 저장되었고 투자성향이 분석되었습니다.",
         "user_id": current_user.user_id,
         "answer_count": len(saved),
+        "investment_style": analysis["investor_type"],
+        "analysis": analysis,
     }
 
 
@@ -187,16 +193,23 @@ def get_my_propensity(
     )
 
     if not advice:
-        # 분석 결과가 아직 없는 경우
         return {
             "message": "아직 투자성향 분석 결과가 없습니다. 설문을 먼저 완료하세요.",
             "result": None,
         }
 
+    parsed = None
+    if advice.ai_detailed_advice:
+        try:
+            parsed = json.loads(advice.ai_detailed_advice)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+
     return {
         "advice_id": advice.advice_id,
         "ai_analysis_result": advice.ai_analysis_result,
         "ai_detailed_advice": advice.ai_detailed_advice,
+        "analysis": parsed,
         "created_at": advice.created_at,
     }
 
