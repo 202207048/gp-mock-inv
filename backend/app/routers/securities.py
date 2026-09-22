@@ -14,6 +14,9 @@ FastAPI는 경로를 위에서부터 순서대로 매칭하므로, 순서가 바
 "ranking"이 symbol_code 값으로 처리된다.
 """
 
+from typing import Literal
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -21,6 +24,7 @@ from app.database import get_db
 from app.models.security import ItemMaster
 from app.schemas.security import SecurityResponse
 from app.services.kis_service import get_current_price, get_stock_chart, get_stock_ranking
+from app.services.chart_history import ChartUnavailable, get_chart_history
 
 # prefix는 main.py에서 /api/stocks 로 지정
 router = APIRouter(tags=["주식 시세"])
@@ -130,9 +134,15 @@ async def get_price(
 async def get_chart(
     symbol_code: str,
     period: str = Query("D", description="D(일봉), W(주봉), M(월봉)"),
+    range: Literal["D", "W", "M", "Y"] | None = Query(
+        None, description="상세 차트: D(1일), W(1주), M(3개월), Y(1년). 지정 시 period보다 우선"
+    ),
 ):
     """
     차트 데이터(캔들스틱)를 반환합니다.
+
+    range를 지정하면 분봉·기간 조회 결과(rows, range, resolution, notice)를 반환합니다.
+    생략하면 기존 period 기준의 가격 배열을 그대로 반환합니다.
 
     응답 예시:
         [
@@ -141,4 +151,13 @@ async def get_chart(
             ...
         ]
     """
+    if range is not None:
+        if len(symbol_code) != 6 or any(char not in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" for char in symbol_code):
+            raise HTTPException(status_code=422, detail="종목코드는 6자리 영문 대문자 또는 숫자여야 합니다.")
+        try:
+            return await get_chart_history(symbol_code, range)
+        except ChartUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        except (httpx.HTTPError, ValueError, KeyError) as error:
+            raise HTTPException(status_code=502, detail="KIS 차트 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.") from error
     return await get_stock_chart(symbol_code, period)
