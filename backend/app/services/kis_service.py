@@ -440,13 +440,153 @@ async def get_index_price(kis_code: str) -> dict | None:
     return {"value": value, "change_rate": change_rate}
 
 
+def _index_bar(item: dict) -> dict | None:
+    """업종 분봉 한 건을 당일 장중 포인트로 바꾼다. 형식이 아니면 None."""
+    raw_time = str(item.get("stck_cntg_hour") or "")
+    day = str(item.get("stck_bsop_date") or "")
+    if len(raw_time) != 6 or not raw_time.isdigit():
+        return None
+    if len(day) != 8 or not day.isdigit():
+        return None
+    if not ("090000" <= raw_time <= "153000"):
+        return None
+    value = _to_float(item.get("bstp_nmix_prpr"))
+    if value is None or value <= 0:
+        return None
+    return {"date": day, "time": raw_time, "value": value}
+
+
+def _ten_minute_points(rows: list[dict]) -> list[dict]:
+    """장중 분봉을 10분 간격으로 묶는다. 각 구간의 마지막 지수를 쓴다."""
+    buckets: dict[str, dict] = {}
+    for row in rows:
+        minute = int(row["time"][2:4]) // 10 * 10
+        key = f"{row['time'][:2]}{minute:02d}00"
+        current = buckets.get(key)
+        if current is None or row["time"] >= current["time"]:
+            buckets[key] = row
+    return [
+        {"time": key, "value": buckets[key]["value"]}
+        for key in sorted(buckets)
+    ]
+
+
+_intraday_cache: dict = {}
+
+
+async def get_index_intraday(kis_code: str) -> dict | None:
+    """
+    코스피·코스닥 당일 10분 지수 포인트를 반환한다. (실전 API 전용)
+
+    홈 미니차트는 intraday.points 가 2개 이상일 때만 선을 그린다.
+    조회에 실패하면 None 을 반환하고, 현재가 카드는 그대로 둔다.
+    """
+    now = datetime.utcnow()
+    cached = _intraday_cache.get(kis_code)
+    if cached and cached.get("expires_at") and now < cached["expires_at"]:
+        return cached["data"]
+
+    data = await _fetch_index_intraday(kis_code)
+    _intraday_cache[kis_code] = {
+        "data": data,
+        "expires_at": now + timedelta(seconds=60),
+    }
+    return data
+
+
+async def _fetch_index_intraday(kis_code: str) -> dict | None:
+    if not settings.KIS_REAL_APP_KEY:
+        return None
+
+    tr_id = "FHKUP03500200"  # 국내업종 분봉조회, 600초 = 10분
+    _assert_read_only(tr_id)
+
+    try:
+        token = await get_real_kis_token()
+    except Exception as e:
+        print(f"[KIS 지수 분봉 토큰 오류] {e}")
+        return None
+
+    found: dict[tuple[str, str], dict] = {}
+    tr_cont = ""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            for page in range(4):
+                headers = {
+                    "authorization": f"Bearer {token}",
+                    "appkey": settings.KIS_REAL_APP_KEY,
+                    "appsecret": settings.KIS_REAL_APP_SECRET,
+                    "tr_id": tr_id,
+                    "custtype": "P",
+                }
+                if tr_cont:
+                    headers["tr_cont"] = tr_cont
+                resp = await client.get(
+                    f"{KIS_REAL_URL}/uapi/domestic-stock/v1/quotations/inquire-time-indexchartprice",
+                    headers=headers,
+                    params={
+                        "FID_COND_MRKT_DIV_CODE": "U",
+                        "FID_ETC_CLS_CODE": "0",
+                        "FID_INPUT_ISCD": kis_code,
+                        "FID_INPUT_HOUR_1": "600",
+                        "FID_PW_DATA_INCU_YN": "N",
+                    },
+                )
+                if resp.status_code >= 400:
+                    print(f"[KIS 지수 분봉 오류] code={kis_code} status={resp.status_code}")
+                    if page == 0:
+                        return None
+                    break
+                raw = resp.json()
+                if str(raw.get("rt_cd")) != "0":
+                    print(
+                        f"[KIS 지수 분봉 응답] code={kis_code} rt_cd={raw.get('rt_cd')} "
+                        f"msg={raw.get('msg1')}"
+                    )
+                    if page == 0:
+                        return None
+                    break
+                output = raw.get("output2") or []
+                if isinstance(output, dict):
+                    output = [output]
+                for item in output:
+                    if not isinstance(item, dict):
+                        continue
+                    bar = _index_bar(item)
+                    if bar is None:
+                        continue
+                    found.setdefault((bar["date"], bar["time"]), bar)
+                next_cont = (resp.headers.get("tr_cont") or "").strip()
+                if next_cont not in ("M", "F") or not output:
+                    break
+                tr_cont = "N"
+                if page < 3:
+                    await asyncio.sleep(0.2)
+    except Exception as e:
+        print(f"[KIS 지수 분봉 요청 오류] {e}")
+        return None
+
+    if not found:
+        print(f"[KIS 지수 분봉] code={kis_code} 당일 포인트 없음")
+        return None
+
+    latest_date = max(key[0] for key in found)
+    rows = [bar for (day, _), bar in found.items() if day == latest_date]
+    points = _ten_minute_points(rows)
+    print(f"[KIS 지수 분봉] code={kis_code} date={latest_date} points={len(points)}")
+    if len(points) < 2:
+        return None
+    return {"date": latest_date, "points": points}
+
+
 async def get_market_indices() -> list[dict]:
     """
     홈 상단 주요 시세 카드용 목록을 반환한다.
 
     Returns:
         [
-            {"code": "kospi", "name": "코스피", "value": 2650.12, "change_rate": 0.85},
+            {"code": "kospi", "name": "코스피", "value": 2650.12, "change_rate": 0.85,
+             "intraday": {"date": "20260923", "points": [{"time": "090000", "value": 2640.1}]}},
             {"code": "kosdaq", "name": "코스닥", "value": 850.33, "change_rate": -0.42},
             {"code": "nasdaq", "name": "나스닥", "value": None, "change_rate": None},
             ...
@@ -470,19 +610,29 @@ async def get_market_indices() -> list[dict]:
     quotes = await asyncio.gather(
         *[get_index_price(slot["kis_code"]) for slot in live_slots]
     )
+    intradays = await asyncio.gather(
+        *[get_index_intraday(slot["kis_code"]) for slot in live_slots]
+    )
     quote_by_code = {
         slot["code"]: quote for slot, quote in zip(live_slots, quotes)
+    }
+    intraday_by_code = {
+        slot["code"]: intraday for slot, intraday in zip(live_slots, intradays)
     }
 
     result = []
     for slot in _INDEX_SLOTS:
         quote = quote_by_code.get(slot["code"])
-        result.append({
+        item = {
             "code": slot["code"],
             "name": slot["name"],
             "value": quote["value"] if quote else None,
             "change_rate": quote["change_rate"] if quote else None,
-        })
+        }
+        intraday = intraday_by_code.get(slot["code"])
+        if intraday:
+            item["intraday"] = intraday
+        result.append(item)
 
     _index_cache["data"] = result
     _index_cache["expires_at"] = now + timedelta(seconds=15)
