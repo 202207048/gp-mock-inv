@@ -175,3 +175,78 @@ def generate_coach_advice(facts: dict, cache_key: str | None = None) -> dict:
             "expires_at": now + timedelta(seconds=_COACH_CACHE_SECONDS),
         }
     return result
+
+
+_news_cache: dict = {}
+_NEWS_CACHE_SECONDS = 180
+_NEWS_DISCLAIMER = "모의투자 연습용 설명이며 투자 권유가 아닙니다."
+
+
+def _text_list(value, limit: int) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    lines = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            lines.append(text)
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def generate_news_brief(symbol_code: str, name: str, articles: list[dict]) -> dict:
+    """
+    종목 뉴스 제목·요약만 Gemini에 보내 짧은 이유를 만든다.
+    같은 종목은 3분 동안 다시 부르지 않는다.
+    """
+    now = datetime.utcnow()
+    cached = _news_cache.get(symbol_code)
+    if cached and cached.get("expires_at") and now < cached["expires_at"]:
+        return cached["data"]
+
+    lines = []
+    titles = []
+    for article in articles[:5]:
+        title = str(article.get("title") or "").strip()
+        summary = str(article.get("summary") or "").strip()
+        if not title:
+            continue
+        titles.append(title)
+        lines.append(f"- {title}" + (f" ({summary})" if summary else ""))
+
+    prompt = f"""
+당신은 대학생 모의투자 앱의 뉴스 요약입니다.
+아래 기사만 보고, 이 종목이 왜 언급되는지 짧게 정리하세요.
+
+[종목]
+{name} ({symbol_code})
+
+[기사]
+{chr(10).join(lines)}
+
+[금지]
+- 사라, 팔아라, 목표가, 수익률 보장
+- 기사에 없는 숫자, 이유, 사건을 만들지 말 것
+
+[출력 JSON]
+- headline: 이유를 한 줄
+- summary: 기사에 있는 내용만 2~3문장. 문자열 배열
+- tags: 기사에 나온 주제 단어 1~3개. 문자열 배열
+- disclaimer: 모의투자 연습용이며 투자 권유가 아니라는 한 문장
+"""
+    data = _call_gemini_json(prompt) or {}
+    summary = _text_list(data.get("summary"), 3) or titles[:3]
+    result = {
+        "headline": str(data.get("headline") or "").strip() or "뉴스 요약을 잠시 사용할 수 없습니다.",
+        "summary": summary,
+        "tags": _text_list(data.get("tags"), 3),
+        "disclaimer": str(data.get("disclaimer") or "").strip() or _NEWS_DISCLAIMER,
+    }
+    _news_cache[symbol_code] = {
+        "data": result,
+        "expires_at": now + timedelta(seconds=_NEWS_CACHE_SECONDS),
+    }
+    return result
