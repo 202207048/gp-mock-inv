@@ -358,9 +358,17 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
     return result
 
 
-# ── 주요 시세 (실전투자 키) ───────────────────────────────────
-# 홈 상단 카드용. 코스피·코스닥만 KIS에서 가져오고, 나머지는 null로 둔다.
-# 프론트는 value 가 null 이면 "준비 중"을 그대로 보여 주면 된다.
+# ── 주요 시세 ────────────────────────────────────────────────
+# 홈 상단 카드용. 코스피·코스닥은 KIS 실전 지수, 나스닥·S&P·금·달러는 네이버 시세.
+# 조회에 실패하면 그 카드만 null 이고, 프론트는 "준비 중"을 보여 준다.
+
+_NAVER_QUOTE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+}
 
 _INDEX_SLOTS = [
     {"code": "kospi", "name": "코스피", "kis_code": "0001"},
@@ -380,6 +388,91 @@ def _to_float(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _naver_number(value) -> float | None:
+    """'27,068.72' 처럼 쉼표가 있는 시세 글자를 숫자로 바꾼다."""
+    if value is None:
+        return None
+    return _to_float(str(value).replace(",", "").strip())
+
+
+def _quote_from_naver(item) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    value = _naver_number(item.get("closePrice"))
+    if value is None:
+        return None
+    return {"value": value, "change_rate": _naver_number(item.get("fluctuationsRatio"))}
+
+
+async def _fetch_naver_market_quotes() -> dict:
+    """
+    나스닥 종합, S&P 500, 국내 금(원/g), 원/달러를 네이버 시세 JSON에서 읽는다.
+
+    한 항목이 실패해도 나머지 카드는 채운다. 전부 실패하면 빈 dict.
+    """
+    urls = {
+        "usa": "https://api.stock.naver.com/index/nation/USA",
+        "usd": "https://api.stock.naver.com/marketindex/exchange/FX_USDKRW",
+        "metals": "https://api.stock.naver.com/marketindex/metals",
+    }
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            responses = await asyncio.gather(
+                *[
+                    client.get(url, headers=_NAVER_QUOTE_HEADERS, timeout=10)
+                    for url in urls.values()
+                ],
+                return_exceptions=True,
+            )
+    except Exception as e:
+        print(f"[시세] 네이버 주요 시세 오류 {e}")
+        return {}
+
+    payloads = {}
+    for key, resp in zip(urls, responses):
+        if isinstance(resp, Exception) or resp.status_code >= 400:
+            status = getattr(resp, "status_code", "error")
+            print(f"[시세] 네이버 {key} 조회 실패 status={status}")
+            continue
+        try:
+            payloads[key] = resp.json()
+        except Exception as e:
+            print(f"[시세] 네이버 {key} JSON 오류 {e}")
+
+    found = {}
+    usa = payloads.get("usa")
+    if isinstance(usa, list):
+        by_reuters = {
+            item.get("reutersCode"): item for item in usa if isinstance(item, dict)
+        }
+        for code, reuters in (("nasdaq", ".IXIC"), ("sp500", ".INX")):
+            quote = _quote_from_naver(by_reuters.get(reuters))
+            if quote:
+                found[code] = quote
+
+    usd_payload = payloads.get("usd")
+    if isinstance(usd_payload, dict):
+        quote = _quote_from_naver(usd_payload.get("exchangeInfo"))
+        if quote:
+            found["usd"] = quote
+
+    metals = payloads.get("metals")
+    if isinstance(metals, list):
+        gold_item = next(
+            (
+                item for item in metals
+                if isinstance(item, dict) and item.get("reutersCode") == "M04020000"
+            ),
+            None,
+        )
+        quote = _quote_from_naver(gold_item)
+        if quote:
+            found["gold"] = quote
+
+    print(f"[시세] 네이버 주요 시세 {', '.join(found) or '없음'}")
+    return found
 
 
 async def get_index_price(kis_code: str) -> dict | None:
@@ -588,8 +681,10 @@ async def get_market_indices() -> list[dict]:
             {"code": "kospi", "name": "코스피", "value": 2650.12, "change_rate": 0.85,
              "intraday": {"date": "20260923", "points": [{"time": "090000", "value": 2640.1}]}},
             {"code": "kosdaq", "name": "코스닥", "value": 850.33, "change_rate": -0.42},
-            {"code": "nasdaq", "name": "나스닥", "value": None, "change_rate": None},
-            ...
+            {"code": "nasdaq", "name": "나스닥", "value": 27068.72, "change_rate": 0.48},
+            {"code": "sp500", "name": "S&P 500", "value": 7743.41, "change_rate": 0.51},
+            {"code": "gold", "name": "금", "value": 189500.0, "change_rate": 0.20},
+            {"code": "usd", "name": "달러", "value": 1359.0, "change_rate": 0.26},
         ]
     """
     now = datetime.utcnow()
@@ -619,10 +714,11 @@ async def get_market_indices() -> list[dict]:
     intraday_by_code = {
         slot["code"]: intraday for slot, intraday in zip(live_slots, intradays)
     }
+    naver_quotes = await _fetch_naver_market_quotes()
 
     result = []
     for slot in _INDEX_SLOTS:
-        quote = quote_by_code.get(slot["code"])
+        quote = quote_by_code.get(slot["code"]) or naver_quotes.get(slot["code"])
         item = {
             "code": slot["code"],
             "name": slot["name"],
