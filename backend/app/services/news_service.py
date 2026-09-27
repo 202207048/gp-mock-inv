@@ -21,69 +21,76 @@ import httpx
 from bs4 import BeautifulSoup
 
 
+def _news_time(value: str) -> str:
+    """202609271319 형태를 2026.09.27 13:19 로 바꾼다. 형식이 다르면 원문을 둔다."""
+    text = (value or "").strip()
+    if len(text) == 12 and text.isdigit():
+        return f"{text[0:4]}.{text[4:6]}.{text[6:8]} {text[8:10]}:{text[10:12]}"
+    return text
+
+
 async def get_news_by_symbol(symbol_code: str, limit: int = 10) -> list[dict]:
     """
-    특정 종목의 뉴스를 네이버 금융에서 크롤링합니다.
-    
+    특정 종목의 뉴스를 네이버 시세 뉴스 API에서 가져옵니다.
+
+    예전 네이버 금융 종목 뉴스 페이지는 404라서 빈 배열이 됐습니다.
+    이 API는 제목, 요약, 언론사, 시간, 링크를 JSON으로 줍니다.
+
     Args:
         symbol_code: 종목 코드 (예: "005930" = 삼성전자)
         limit: 가져올 뉴스 개수 (기본 10개)
-    
-    Returns:
-        뉴스 목록:
-        [
-            {
-                "title": "삼성전자, 3분기 실적 발표...",
-                "url": "https://finance.naver.com/...",
-                "date": "2024.01.15 09:30",
-                "source": "연합뉴스"
-            },
-            ...
-        ]
-        
-        크롤링 실패 시 빈 리스트 반환 (오류가 나도 서버가 죽지 않도록)
-    """
-    # 네이버 금융 종목 뉴스 URL
-    url = f"https://finance.naver.com/item/news_news.naver?code={symbol_code}"
 
-    # User-Agent: 브라우저인 척 헤더를 보냄 (없으면 봇으로 인식해 차단 가능)
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    Returns:
+        뉴스 목록. 실패하면 빈 리스트.
+    """
+    code = (symbol_code or "").strip()
+    size = min(max(limit, 1), 20)
+    url = f"https://m.stock.naver.com/api/news/stock/{code}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
 
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, headers=headers, timeout=10)
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers, params={"pageSize": size, "page": 1}, timeout=10)
+        if resp.status_code >= 400:
+            print(f"[뉴스] 종목 뉴스 조회 실패 code={code} status={resp.status_code}")
+            return []
 
-            # 네이버 금융은 euc-kr 인코딩을 사용함 (한글 깨짐 방지)
-            resp.encoding = "euc-kr"
-
-            # BeautifulSoup으로 HTML 파싱
-            soup = BeautifulSoup(resp.text, "html.parser")
-
+        payload = resp.json()
+        groups = payload if isinstance(payload, list) else [payload]
         news_list = []
-
-        # CSS 선택자로 뉴스 행(row) 추출
-        # "table.type5 tbody tr" → class가 type5인 table의 tbody 안의 tr들
-        rows = soup.select("table.type5 tbody tr")
-
-        for row in rows[:limit]:
-            # 제목과 링크 추출
-            title_tag = row.select_one("td.title a")
-            date_tag = row.select_one("td.date")
-            source_tag = row.select_one("td.info")  # 언론사
-
-            if title_tag:
+        seen = set()
+        for group in groups:
+            items = group.get("items") if isinstance(group, dict) else None
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                title = (item.get("titleFull") or item.get("title") or "").strip()
+                link = (item.get("mobileNewsUrl") or "").strip()
+                if not title or not link or link in seen:
+                    continue
+                seen.add(link)
                 news_list.append({
-                    "title": title_tag.get_text(strip=True),    # 뉴스 제목
-                    "url": "https://finance.naver.com" + title_tag.get("href", ""),
-                    "date": date_tag.get_text(strip=True) if date_tag else "",
-                    "source": source_tag.get_text(strip=True) if source_tag else "",
+                    "title": title,
+                    "url": link,
+                    "summary": (item.get("body") or "").strip(),
+                    "source": (item.get("officeName") or "").strip(),
+                    "date": _news_time(str(item.get("datetime") or "")),
                 })
+                if len(news_list) >= size:
+                    break
+            if len(news_list) >= size:
+                break
 
+        print(f"[뉴스] 종목 뉴스 code={code} status={resp.status_code} count={len(news_list)}")
         return news_list
 
-    except Exception:
-        # 크롤링 실패(네트워크 오류, HTML 구조 변경 등) 시 빈 리스트 반환
-        # 뉴스 크롤링 실패가 전체 서버를 멈추면 안 됨
+    except Exception as e:
+        print(f"[뉴스] 종목 뉴스 조회 실패 code={code} error={e}")
         return []
 
 
