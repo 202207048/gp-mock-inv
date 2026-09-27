@@ -87,44 +87,70 @@ async def get_news_by_symbol(symbol_code: str, limit: int = 10) -> list[dict]:
         return []
 
 
+def _news_url(href: str) -> str:
+    """이미 절대주소면 그대로 두고, 상대경로만 네이버 뉴스 도메인을 붙인다."""
+    href = (href or "").strip()
+    if href.startswith("https://") or href.startswith("http://"):
+        return href
+    if href.startswith("//"):
+        return "https:" + href
+    if href.startswith("/"):
+        return "https://news.naver.com" + href
+    return href
+
+
 async def get_market_news(limit: int = 20) -> list[dict]:
     """
-    전체 주식 시장 뉴스를 네이버 금융에서 크롤링합니다.
-    
-    특정 종목이 아닌 증권 전반의 뉴스를 가져옵니다.
-    
+    증권 시장 뉴스를 네이버 뉴스 경제 면에서 가져옵니다.
+
+    예전 네이버 금융 뉴스 목록은 기사 HTML이 없어 빈 배열이 됐습니다.
+    이 페이지는 제목, 요약, 언론사, 시간이 본문에 있습니다.
+
     Args:
         limit: 가져올 뉴스 개수 (기본 20개)
-    
+
     Returns:
-        시장 뉴스 목록
+        시장 뉴스 목록. 실패하면 빈 리스트.
     """
-    url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    # 101=경제, 258=증권
+    url = "https://news.naver.com/breakingnews/section/101/258"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    }
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
             resp = await client.get(url, headers=headers, timeout=10)
-            resp.encoding = "euc-kr"
-            soup = BeautifulSoup(resp.text, "html.parser")
+        if resp.status_code >= 400:
+            print(f"[뉴스] 시장 뉴스 조회 실패 status={resp.status_code}")
+            return []
 
+        soup = BeautifulSoup(resp.text, "html.parser")
         news_list = []
 
-        # 뉴스 목록 항목 추출
-        items = soup.select("ul.newsList li")
+        for item in soup.select("div.sa_text"):
+            title_tag = item.select_one("a.sa_text_title")
+            if title_tag is None:
+                continue
+            title = title_tag.get_text(strip=True)
+            if not title:
+                continue
+            summary_tag = item.select_one("div.sa_text_lede")
+            source_tag = item.select_one("div.sa_text_press")
+            date_tag = item.select_one("div.sa_text_datetime")
+            news_list.append({
+                "title": title,
+                "url": _news_url(title_tag.get("href", "")),
+                "summary": summary_tag.get_text(strip=True) if summary_tag else "",
+                "source": source_tag.get_text(strip=True) if source_tag else "",
+                "date": date_tag.get_text(strip=True) if date_tag else "",
+            })
+            if len(news_list) >= limit:
+                break
 
-        for item in items[:limit]:
-            title_tag = item.select_one("a.articleSubject")
-            date_tag = item.select_one("span.wdate")
-
-            if title_tag:
-                news_list.append({
-                    "title": title_tag.get_text(strip=True),
-                    "url": "https://finance.naver.com" + title_tag.get("href", ""),
-                    "date": date_tag.get_text(strip=True) if date_tag else "",
-                })
-
+        print(f"[뉴스] 시장 뉴스 status={resp.status_code} count={len(news_list)}")
         return news_list
 
-    except Exception:
+    except Exception as e:
+        print(f"[뉴스] 시장 뉴스 조회 실패: {e}")
         return []

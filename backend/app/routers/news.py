@@ -37,8 +37,10 @@ async def market_news(
         [
             {
                 "title": "코스피, 외국인 매수세에 강세...",
-                "url": "https://finance.naver.com/...",
-                "date": "2024.01.15 09:30"
+                "url": "https://n.news.naver.com/...",
+                "summary": "외국인 순매수에 코스피가 올랐습니다.",
+                "source": "연합뉴스",
+                "date": "6분전"
             },
             ...
         ]
