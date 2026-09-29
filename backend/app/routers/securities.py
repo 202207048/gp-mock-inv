@@ -25,9 +25,11 @@ from app.models.security import ItemMaster
 from app.schemas.security import SecurityResponse
 from app.services.kis_service import get_current_price, get_stock_chart, get_stock_ranking
 from app.services.chart_history import ChartUnavailable, get_chart_history
+from app.routers.stock_logos import router as stock_logos_router
 
 # prefix는 main.py에서 /api/stocks 로 지정
 router = APIRouter(tags=["주식 시세"])
+router.include_router(stock_logos_router)
 
 
 @router.get("", response_model=list[SecurityResponse], summary="종목 목록 조회")

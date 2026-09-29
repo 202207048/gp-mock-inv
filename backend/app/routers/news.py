@@ -1,14 +1,13 @@
 """
 routers/news.py - 뉴스/이슈 API 엔드포인트
 
-시장 뉴스는 한국경제 증권 RSS, 종목 뉴스는 네이버 금융에서 가져옵니다.
+시장 뉴스는 네이버 증권 뉴스 목록, 종목 뉴스는 네이버 금융에서 가져옵니다.
 
 제공하는 API:
     GET /news/market        → 전체 시장 뉴스
     GET /news/{symbol_code} → 특정 종목 뉴스
 
 참고:
-    - 시장 뉴스는 5분 동안 캐시합니다
     - 응답 속도가 느릴 수 있습니다 (네이버 서버 응답 대기)
     - 실제 서비스에서는 주기적으로 크롤링 후 DB에 저장하는 방식 권장
 """
@@ -40,6 +39,7 @@ async def market_news(
                 "url": "https://n.news.naver.com/...",
                 "summary": "외국인 순매수에 코스피가 올랐습니다.",
                 "source": "연합뉴스",
+                "image_url": "https://mimgnews.pstatic.net/image/example.jpg",
                 "date": "6분전"
             },
             ...

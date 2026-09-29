@@ -17,8 +17,52 @@ async/await 사용 이유:
     async/await로 처리하면 요청을 기다리는 동안 다른 요청도 처리 가능합니다.
 """
 
+from urllib.parse import urljoin, urlsplit
+
 import httpx
 from bs4 import BeautifulSoup
+
+
+class NewsUnavailable(Exception):
+    """The upstream market news source could not be retrieved."""
+
+
+MARKET_NEWS_URL = "https://news.naver.com/breakingnews/section/101/258"
+
+
+def parse_market_news(html: str) -> list[dict]:
+    """Extract each article and its own thumbnail without fetching article pages."""
+    soup = BeautifulSoup(html, "html.parser")
+    articles = []
+    for item in soup.select("div.sa_text"):
+        title_tag = item.select_one("a.sa_text_title")
+        if title_tag is None or not title_tag.get_text(strip=True):
+            continue
+        card = item.find_parent(class_="sa_item_flex")
+        image = card.select_one(".sa_thumb img") if card else None
+        image_url = ""
+        if image:
+            for attribute in ("data-src", "src"):
+                candidate = str(image.get(attribute) or "").strip()
+                if not candidate:
+                    continue
+                candidate = urljoin(MARKET_NEWS_URL, candidate)
+                parsed = urlsplit(candidate)
+                if parsed.scheme in ("https", "http") and parsed.hostname:
+                    image_url = candidate
+                    break
+        def text(selector):
+            tag = item.select_one(selector)
+            return tag.get_text(strip=True) if tag else ""
+        articles.append({
+            "title": title_tag.get_text(strip=True),
+            "url": _news_url(title_tag.get("href", "")),
+            "summary": text("div.sa_text_lede"),
+            "source": text("div.sa_text_press"),
+            "date": text("div.sa_text_datetime"),
+            "image_url": image_url,
+        })
+    return articles
 
 
 def _news_time(value: str) -> str:
@@ -117,10 +161,10 @@ async def get_market_news(limit: int = 20) -> list[dict]:
         limit: 가져올 뉴스 개수 (기본 20개)
 
     Returns:
-        시장 뉴스 목록. 실패하면 빈 리스트.
+        시장 뉴스 목록. 조회 실패 시 NewsUnavailable 예외.
     """
     # 101=경제, 258=증권
-    url = "https://news.naver.com/breakingnews/section/101/258"
+    url = MARKET_NEWS_URL
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     }
@@ -130,34 +174,13 @@ async def get_market_news(limit: int = 20) -> list[dict]:
             resp = await client.get(url, headers=headers, timeout=10)
         if resp.status_code >= 400:
             print(f"[뉴스] 시장 뉴스 조회 실패 status={resp.status_code}")
-            return []
+            raise NewsUnavailable("뉴스를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.")
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        news_list = []
-
-        for item in soup.select("div.sa_text"):
-            title_tag = item.select_one("a.sa_text_title")
-            if title_tag is None:
-                continue
-            title = title_tag.get_text(strip=True)
-            if not title:
-                continue
-            summary_tag = item.select_one("div.sa_text_lede")
-            source_tag = item.select_one("div.sa_text_press")
-            date_tag = item.select_one("div.sa_text_datetime")
-            news_list.append({
-                "title": title,
-                "url": _news_url(title_tag.get("href", "")),
-                "summary": summary_tag.get_text(strip=True) if summary_tag else "",
-                "source": source_tag.get_text(strip=True) if source_tag else "",
-                "date": date_tag.get_text(strip=True) if date_tag else "",
-            })
-            if len(news_list) >= limit:
-                break
+        news_list = parse_market_news(resp.text)[:limit]
 
         print(f"[뉴스] 시장 뉴스 status={resp.status_code} count={len(news_list)}")
         return news_list
 
     except Exception as e:
         print(f"[뉴스] 시장 뉴스 조회 실패: {e}")
-        return []
+        raise NewsUnavailable("뉴스를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.") from e
