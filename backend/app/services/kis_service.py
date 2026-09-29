@@ -15,6 +15,7 @@ services/kis_service.py - 한국투자증권 오픈API 연동 서비스
 """
 
 import asyncio
+import math
 from datetime import datetime, timedelta
 
 import httpx
@@ -672,6 +673,80 @@ async def _fetch_index_intraday(kis_code: str) -> dict | None:
     return {"date": latest_date, "points": points}
 
 
+_NAVER_CHART_PATHS = {
+    "nasdaq": "foreign/index/.IXIC",
+    "sp500": "foreign/index/.INX",
+    "gold": "domestic/gold/M04020000",
+    "usd": "domestic/marketindex/FX_USDKRW",
+}
+
+
+def _naver_intraday(payload) -> dict | None:
+    """Normalize the latest local trading day and its market session."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("priceInfos"), list):
+        return None
+    rows = []
+    for item in payload["priceInfos"]:
+        if not isinstance(item, dict):
+            continue
+        stamp = str(item.get("localDateTime") or "")
+        value = _naver_number(item.get("currentPrice"))
+        try:
+            if len(stamp) != 14:
+                continue
+            datetime.strptime(stamp, "%Y%m%d%H%M%S")
+        except ValueError:
+            continue
+        if value is None or not math.isfinite(value) or value <= 0:
+            continue
+        rows.append({"date": stamp[:8], "time": stamp[8:], "value": value})
+    if not rows:
+        return None
+    day = max(row["date"] for row in rows)
+    points = _ten_minute_points([row for row in rows if row["date"] == day])
+    if len(points) < 2:
+        return None
+    # FX has no fixed session; use the observed notification range.
+    start, end = points[0]["time"], points[-1]["time"]
+    for field, is_start in (("openTime", True), ("closeTime", False)):
+        stamp = str(payload.get(field) or "")
+        try:
+            parsed = datetime.strptime(stamp, "%Y%m%d%H%M%S") if len(stamp) == 14 else None
+        except ValueError:
+            parsed = None
+        if parsed and stamp[:8] == day:
+            if is_start:
+                start = min(start, stamp[8:])
+            else:
+                end = max(end, stamp[8:])
+    return {"date": day, "session_start": start, "session_end": end, "points": points}
+
+
+async def _fetch_naver_market_intradays() -> dict:
+    now = datetime.utcnow()
+    cached = _intraday_cache.get("naver")
+    if cached and now < cached["expires_at"]:
+        return cached["data"]
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+        responses = await asyncio.gather(*[
+            client.get(f"https://api.stock.naver.com/chart/{path}",
+                       params={"periodType": "day"}, headers=_NAVER_QUOTE_HEADERS)
+            for path in _NAVER_CHART_PATHS.values()
+        ], return_exceptions=True)
+    found = {}
+    for code, response in zip(_NAVER_CHART_PATHS, responses):
+        if isinstance(response, Exception) or response.status_code >= 400:
+            continue
+        try:
+            data = _naver_intraday(response.json())
+        except (ValueError, TypeError):
+            continue
+        if data:
+            found[code] = data
+    _intraday_cache["naver"] = {"data": found, "expires_at": now + timedelta(seconds=60)}
+    return found
+
+
 async def get_market_indices() -> list[dict]:
     """
     홈 상단 주요 시세 카드용 목록을 반환한다.
@@ -714,7 +789,10 @@ async def get_market_indices() -> list[dict]:
     intraday_by_code = {
         slot["code"]: intraday for slot, intraday in zip(live_slots, intradays)
     }
-    naver_quotes = await _fetch_naver_market_quotes()
+    naver_quotes, naver_intradays = await asyncio.gather(
+        _fetch_naver_market_quotes(), _fetch_naver_market_intradays()
+    )
+    intraday_by_code.update(naver_intradays)
 
     result = []
     for slot in _INDEX_SLOTS:
