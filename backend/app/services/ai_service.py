@@ -198,16 +198,16 @@ def _text_list(value, limit: int) -> list[str]:
 
 
 def _price_move(change_rate) -> tuple[str, str]:
-    """등락률을 상승·하락·보합·미확인으로 나누고, 프롬프트에 넣을 문장을 만든다."""
+    """등락률을 상승·하락·보합·미확인으로 나누고, headline에 그대로 쓸 시작 문장을 만든다."""
     try:
         rate = float(change_rate)
     except (TypeError, ValueError):
-        return "unknown", "오늘 등락률은 확인되지 않았습니다. 가격이 오른 이유나 내린 이유는 쓰지 마세요."
+        return "unknown", "등락률은 확인되지 않았습니다. headline에 퍼센트를 넣지 마세요."
     if rate > 0:
-        return "up", f"오늘 등락률은 +{rate}%입니다. 상승입니다."
+        return "up", f'headline은 반드시 "오늘은 +{rate:g}% 올랐고,"로 시작한다. 이 퍼센트 외의 등락률은 쓰지 않는다.'
     if rate < 0:
-        return "down", f"오늘 등락률은 {rate}%입니다. 하락입니다."
-    return "flat", "오늘 등락률은 0%입니다. 보합입니다."
+        return "down", f'headline은 반드시 "오늘은 {rate:g}% 내렸고,"로 시작한다. 이 퍼센트 외의 등락률은 쓰지 않는다.'
+    return "flat", 'headline은 "오늘은 0%로 보합이고,"로 시작한다.'
 
 
 def generate_news_brief(
@@ -221,7 +221,7 @@ def generate_news_brief(
     같은 종목·같은 방향은 3분 동안 다시 부르지 않는다.
     """
     direction, move_text = _price_move(change_rate)
-    cache_key = f"{symbol_code}:{direction}"
+    cache_key = f"{symbol_code}:{direction}:{change_rate}"
     now = datetime.utcnow()
     cached = _news_cache.get(cache_key)
     if cached and cached.get("expires_at") and now < cached["expires_at"]:
@@ -252,9 +252,8 @@ def generate_news_brief(
 {chr(10).join(lines)}
 
 [정리]
-- 상승이면 headline은 "오늘은 올랐고, 기사에서 같이 보이는 이슈는 ..." 형태로 한 줄로 쓴다.
-- 하락이면 headline은 "오늘은 내렸고, 기사에서 같이 보이는 이슈는 ..." 형태로 한 줄로 쓴다.
-- 보합이거나 등락률이 없으면 기사에서 보이는 이슈만 한 줄로 쓴다.
+- headline은 위에 적힌 시작 문장을 그대로 쓰고, 이어서 "기사에서 같이 보이는 이슈는 ..."를 붙인다.
+- 등락률이 없으면 퍼센트 없이 기사에서 보이는 이슈만 한 줄로 쓴다.
 - summary는 그 이슈의 기사 내용 2~3문장이다. 마지막 문장에 이 이슈가 오늘 등락의 원인인지는 기사만으로 확인되지 않는다고 쓴다.
 - 기사가 가격 변동의 이유라고 직접 말한 경우에만, 그 문장 대신 기사에 그렇게 나와 있다고 쓴다.
 
