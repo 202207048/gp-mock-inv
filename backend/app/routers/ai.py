@@ -6,7 +6,7 @@ routers/ai.py - AI 및 투자성향 설문 API 엔드포인트
     POST /api/ai/survey             → 설문 저장 후 Gemini 투자성향 분석
     GET  /api/ai/propensity         → 내 투자성향 분석 결과 조회
     GET  /api/ai/coach              → 시세 요약 기반 모의투자 조언
-    GET  /api/ai/news-summary/{code}→ 종목 뉴스 기반 짧은 이유 요약
+    GET  /api/ai/news-summary/{code}→ 오늘 등락과 종목 뉴스를 연결한 짧은 설명
 
     [AI 서버 연동 - AI팀 서버가 필요]
     GET  /api/ai/recommend          → AI 종목 추천
@@ -390,8 +390,8 @@ async def ai_news_summary(
     db: Session = Depends(get_db),
 ):
     """
-    종목 뉴스 몇 건만 Gemini에 보내 왜 언급되는지 짧게 정리합니다.
-    매수·매도 지시가 아니라 기사에 있는 이유만 말합니다.
+    종목 뉴스와 오늘 등락률을 Gemini에 보내, 왜 오르거나 내렸는지 짧게 정리합니다.
+    기사에 그 이유가 없으면 원인을 만들지 않습니다. 매수·매도 지시는 하지 않습니다.
 
     사용 예시:
         GET /api/ai/news-summary/005930  → 삼성전자 뉴스 요약
@@ -438,7 +438,9 @@ async def ai_news_summary(
             "disclaimer": "모의투자 연습용 설명이며 투자 권유가 아닙니다.",
         }
     else:
-        brief = await asyncio.to_thread(generate_news_brief, code, name, articles)
+        brief = await asyncio.to_thread(
+            generate_news_brief, code, name, articles, change_rate
+        )
         result = {
             "symbol_code": code,
             "name": name,

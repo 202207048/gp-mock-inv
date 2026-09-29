@@ -197,13 +197,33 @@ def _text_list(value, limit: int) -> list[str]:
     return lines
 
 
-def generate_news_brief(symbol_code: str, name: str, articles: list[dict]) -> dict:
+def _price_move(change_rate) -> tuple[str, str]:
+    """등락률을 상승·하락·보합·미확인으로 나누고, 프롬프트에 넣을 문장을 만든다."""
+    try:
+        rate = float(change_rate)
+    except (TypeError, ValueError):
+        return "unknown", "오늘 등락률은 확인되지 않았습니다. 가격이 오른 이유나 내린 이유는 쓰지 마세요."
+    if rate > 0:
+        return "up", f"오늘 등락률은 +{rate}%입니다. 상승입니다."
+    if rate < 0:
+        return "down", f"오늘 등락률은 {rate}%입니다. 하락입니다."
+    return "flat", "오늘 등락률은 0%입니다. 보합입니다."
+
+
+def generate_news_brief(
+    symbol_code: str,
+    name: str,
+    articles: list[dict],
+    change_rate=None,
+) -> dict:
     """
-    종목 뉴스 제목·요약만 Gemini에 보내 짧은 이유를 만든다.
-    같은 종목은 3분 동안 다시 부르지 않는다.
+    종목 뉴스와 오늘 등락률을 Gemini에 보내, 오르내림과 기사를 연결한 짧은 설명을 만든다.
+    같은 종목·같은 방향은 3분 동안 다시 부르지 않는다.
     """
+    direction, move_text = _price_move(change_rate)
+    cache_key = f"{symbol_code}:{direction}"
     now = datetime.utcnow()
-    cached = _news_cache.get(symbol_code)
+    cached = _news_cache.get(cache_key)
     if cached and cached.get("expires_at") and now < cached["expires_at"]:
         return cached["data"]
 
@@ -219,20 +239,31 @@ def generate_news_brief(symbol_code: str, name: str, articles: list[dict]) -> di
 
     prompt = f"""
 당신은 대학생 모의투자 앱의 뉴스 요약입니다.
-아래 기사만 보고, 이 종목이 왜 언급되는지 짧게 정리하세요.
+오늘 등락과 아래 기사를 연결해서, 왜 오르거나 내렸는지 짧게 정리하세요.
+기사에 그 이유가 없으면 원인을 만들지 마세요.
 
 [종목]
 {name} ({symbol_code})
 
+[오늘 등락]
+{move_text}
+
 [기사]
 {chr(10).join(lines)}
 
+[정리]
+- 상승이면 headline은 기사 안에서 오른 이유로 볼 수 있는 내용을 한 줄로 쓴다.
+- 하락이면 headline은 기사 안에서 내린 이유로 볼 수 있는 내용을 한 줄로 쓴다.
+- 보합이거나 등락률이 없으면 왜 언급되는지만 한 줄로 쓴다.
+- summary는 headline을 뒷받침하는 기사 내용만 2~3문장으로 쓴다.
+- 기사에 그 방향의 이유가 없으면, headline에 등락은 말했지만 기사만으로 원인은 확인되지 않는다고 쓴다.
+
 [금지]
 - 사라, 팔아라, 목표가, 수익률 보장
-- 기사에 없는 숫자, 이유, 사건을 만들지 말 것
+- 기사와 위에 적힌 등락률 외에 숫자, 이유, 사건을 만들지 말 것
 
 [출력 JSON]
-- headline: 이유를 한 줄
+- headline: 오늘 등락과 연결된 이유 한 줄
 - summary: 기사에 있는 내용만 2~3문장. 문자열 배열
 - tags: 기사에 나온 주제 단어 1~3개. 문자열 배열
 - disclaimer: 모의투자 연습용이며 투자 권유가 아니라는 한 문장
@@ -245,7 +276,7 @@ def generate_news_brief(symbol_code: str, name: str, articles: list[dict]) -> di
         "tags": _text_list(data.get("tags"), 3),
         "disclaimer": str(data.get("disclaimer") or "").strip() or _NEWS_DISCLAIMER,
     }
-    _news_cache[symbol_code] = {
+    _news_cache[cache_key] = {
         "data": result,
         "expires_at": now + timedelta(seconds=_NEWS_CACHE_SECONDS),
     }
