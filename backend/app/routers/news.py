@@ -37,8 +37,10 @@ async def market_news(
         [
             {
                 "title": "코스피, 외국인 매수세에 강세...",
-                "url": "https://finance.naver.com/...",
-                "date": "2024.01.15 09:30"
+                "url": "https://n.news.naver.com/...",
+                "summary": "외국인 순매수에 코스피가 올랐습니다.",
+                "source": "연합뉴스",
+                "date": "6분전"
             },
             ...
         ]
@@ -64,10 +66,11 @@ async def symbol_news(
     응답 예시:
         [
             {
-                "title": "삼성전자, 갤럭시 S25 출시...",
-                "url": "https://finance.naver.com/...",
-                "date": "2024.01.15 10:00",
-                "source": "연합뉴스"
+                "title": "삼성전자, 실적 발표...",
+                "url": "https://n.news.naver.com/...",
+                "summary": "반도체 실적 기대가 이어지고 있습니다.",
+                "date": "2026.09.27 13:19",
+                "source": "조선비즈"
             },
             ...
         ]
