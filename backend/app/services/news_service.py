@@ -87,44 +87,69 @@ async def get_news_by_symbol(symbol_code: str, limit: int = 10) -> list[dict]:
         return []
 
 
+# The former Naver market HTML now redirects to a client-rendered site.
+# Use the publisher's public securities RSS feed instead.
+import asyncio
+import logging
+from datetime import timedelta, timezone
+from email.utils import parsedate_to_datetime
+from time import monotonic
+from urllib.parse import urlsplit
+from xml.etree import ElementTree
+
+MARKET_FEED_URL = "https://www.hankyung.com/feed/finance"
+_market_cache: list[dict] = []
+_market_cached_at = 0.0
+_market_lock = asyncio.Lock()
+logger = logging.getLogger(__name__)
+
+
+class NewsUnavailable(RuntimeError):
+    pass
+
+
+def parse_market_feed(content: bytes) -> list[dict]:
+    root = ElementTree.fromstring(content)
+    articles = []
+    seen = set()
+    for item in root.findall("./channel/item"):
+        title = (item.findtext("title") or "").strip()
+        url = (item.findtext("link") or "").strip()
+        parts = urlsplit(url)
+        if not title or parts.scheme != "https" or parts.hostname not in {"www.hankyung.com", "hankyung.com"} or url in seen:
+            continue
+        raw_date = (item.findtext("pubDate") or "").strip()
+        try:
+            published = parsedate_to_datetime(raw_date)
+            if published.tzinfo is None:
+                raise ValueError("Missing timezone")
+            date = published.astimezone(timezone(timedelta(hours=9))).strftime("%Y.%m.%d %H:%M")
+        except (ValueError, TypeError, OverflowError):
+            date = ""
+        seen.add(url)
+        articles.append({"title": title, "url": url, "date": date, "source": "한국경제"})
+    return sorted(articles, key=lambda article: article["date"], reverse=True)
+
+
 async def get_market_news(limit: int = 20) -> list[dict]:
-    """
-    전체 주식 시장 뉴스를 네이버 금융에서 크롤링합니다.
-    
-    특정 종목이 아닌 증권 전반의 뉴스를 가져옵니다.
-    
-    Args:
-        limit: 가져올 뉴스 개수 (기본 20개)
-    
-    Returns:
-        시장 뉴스 목록
-    """
-    url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, headers=headers, timeout=10)
-            resp.encoding = "euc-kr"
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-        news_list = []
-
-        # 뉴스 목록 항목 추출
-        items = soup.select("ul.newsList li")
-
-        for item in items[:limit]:
-            title_tag = item.select_one("a.articleSubject")
-            date_tag = item.select_one("span.wdate")
-
-            if title_tag:
-                news_list.append({
-                    "title": title_tag.get_text(strip=True),
-                    "url": "https://finance.naver.com" + title_tag.get("href", ""),
-                    "date": date_tag.get_text(strip=True) if date_tag else "",
+    """Fetch public headline metadata; cache successful results for five minutes."""
+    global _market_cache, _market_cached_at
+    async with _market_lock:
+        if _market_cache and monotonic() - _market_cached_at < 300:
+            return _market_cache[:limit]
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+                response = await client.get(MARKET_FEED_URL, headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/rss+xml, application/xml, text/xml",
                 })
-
-        return news_list
-
-    except Exception:
-        return []
+                response.raise_for_status()
+            articles = parse_market_feed(response.content)
+            if not articles:
+                raise NewsUnavailable("Empty news feed")
+        except (httpx.HTTPError, ElementTree.ParseError, NewsUnavailable) as exc:
+            logger.warning("Market news fetch failed: %s", exc)
+            raise NewsUnavailable("뉴스를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.") from exc
+        _market_cache = articles
+        _market_cached_at = monotonic()
+        return articles[:limit]
