@@ -36,9 +36,6 @@ class ItemMaster(Base):
 
     # 시장 구분 (국내주식, ELW, 선물옵션 중 하나)
     market_type = Column(String(20), nullable=False)
-    # Explicit classification: never infer ETF taxation from a display name.
-    tax_market = Column(String(12), nullable=True)
-    instrument_type = Column(String(20), nullable=True)
 
     # 업종 코드 (예: IT, 금융, 바이오 등)
     # nullable=True: 없어도 됨

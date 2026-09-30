@@ -22,8 +22,7 @@ class OrderRequest(BaseModel):
     order_type: str = Field(..., description="주문 타입 (매수, 매도)")
     # price 는 프론트가 보내는 화면 표시용 값이다. 체결가는 서버가 현재가로 정한다.
     price: Decimal = Field(..., gt=0, description="화면 표시용 희망가 (체결가는 서버가 현재가로 결정)")
-    quantity: int = Field(..., gt=0, le=1_000_000, description="주문 수량 (1주 이상)")
-    cost_policy_version: str = Field(..., max_length=40, description="확인한 비용 정책 버전")
+    quantity: int = Field(..., gt=0, description="주문 수량 (1주 이상)")
 
 
 class OrderResponse(BaseModel):
@@ -52,13 +51,6 @@ class OrderResponse(BaseModel):
     status: str = Field(..., description="현재 주문 상태 (대기, 체결, 거부)")
     message: str | None = Field(None, description="프론트 화면에 띄울 알림 메시지")
     created_at: datetime = Field(..., description="주문 접수 시간")
-    commission: Decimal | None = None
-    transaction_tax: Decimal | None = None
-    rural_tax: Decimal | None = None
-    cash_delta: Decimal | None = None
-    realized_pnl: Decimal | None = None
-    tax_market: str | None = None
-    cost_policy_version: str | None = None
 
     class Config:
         from_attributes = True

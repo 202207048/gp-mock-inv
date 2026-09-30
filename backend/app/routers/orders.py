@@ -18,28 +18,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.account import Account
 from app.models.order import Order
-from app.models.security import ItemMaster
 from app.models.user import User
 from app.schemas.order import OrderRequest, OrderResponse
 from app.services.kis_service import get_current_price
 from app.services.order_service import create_order
-from app.services.trading_costs import POLICY, equity_market
 from app.utils.deps import get_current_user
 
 # prefix는 main.py에서 /api/trading/orders 로 지정
 router = APIRouter(tags=["거래"])
-
-
-@router.get('/cost-policy', summary='모의투자 비용 정책 및 종목 과세 분류')
-def cost_policy(symbol_code: str = Query(..., max_length=20), db: Session = Depends(get_db)):
-    security = db.query(ItemMaster).filter(ItemMaster.symbol_code == symbol_code).first()
-    if not security:
-        raise HTTPException(status_code=404, detail='종목을 찾을 수 없습니다.')
-    try:
-        market = equity_market(security)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {**POLICY, 'tax_market': market, 'instrument_type': 'EQUITY'}
 
 
 @router.post("", response_model=OrderResponse, summary="매수/매도 주문")
@@ -91,10 +77,6 @@ async def place_order(
         status=order.status,
         message=message,
         created_at=order.created_at,
-        commission=order.commission, transaction_tax=order.transaction_tax,
-        rural_tax=order.rural_tax, cash_delta=order.cash_delta,
-        realized_pnl=order.realized_pnl, tax_market=order.tax_market,
-        cost_policy_version=order.cost_policy_version,
     )
 
 
@@ -141,10 +123,6 @@ def get_orders(
             quantity=o.quantity,
             status=o.status,
             created_at=o.created_at,
-            commission=o.commission, transaction_tax=o.transaction_tax,
-            rural_tax=o.rural_tax, cash_delta=o.cash_delta,
-            realized_pnl=o.realized_pnl, tax_market=o.tax_market,
-            cost_policy_version=o.cost_policy_version,
         )
         for o in orders
     ]
