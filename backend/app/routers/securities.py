@@ -23,7 +23,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.security import ItemMaster
 from app.schemas.security import SecurityResponse
-from app.services.kis_service import get_current_price, get_stock_chart, get_stock_ranking
+from app.services.kis_service import (
+    get_current_price,
+    get_listed_stock,
+    get_stock_chart,
+    get_stock_ranking,
+    search_listed_stocks,
+)
 from app.services.chart_history import ChartUnavailable, get_chart_history
 from app.routers.stock_logos import router as stock_logos_router
 
@@ -33,7 +39,7 @@ router.include_router(stock_logos_router)
 
 
 @router.get("", response_model=list[SecurityResponse], summary="종목 목록 조회")
-def get_securities(
+async def get_securities(
     market_type: str | None = Query(None, description="국내주식, ELW, 선물옵션"),
     search: str | None = Query(None, description="종목명 또는 코드 검색"),
     db: Session = Depends(get_db),
@@ -41,8 +47,11 @@ def get_securities(
     """
     종목 목록을 조회합니다.
 
+    검색어가 없으면 DB에 넣어 둔 종목만 최대 100개 반환한다.
+    검색어가 있으면 DB 결과 뒤에, 네이버 종목 검색의 국내 주식을 코드가 겹치지 않게 붙인다.
+
     검색 예시:
-        GET /stocks?search=삼성          → "삼성"이 포함된 모든 종목
+        GET /stocks?search=삼성          → DB와 네이버에서 "삼성"이 포함된 종목
         GET /stocks?market_type=국내주식  → 국내주식만
         GET /stocks?search=005930        → 종목 코드로 검색
     """
@@ -51,13 +60,27 @@ def get_securities(
     if market_type:
         query = query.filter(ItemMaster.market_type == market_type)
 
-    if search:
+    keyword = (search or "").strip()
+    if keyword:
         query = query.filter(
-            ItemMaster.name.ilike(f"%{search}%") |
-            ItemMaster.symbol_code.ilike(f"%{search}%")
+            ItemMaster.name.ilike(f"%{keyword}%") |
+            ItemMaster.symbol_code.ilike(f"%{keyword}%")
         )
 
-    return query.limit(100).all()
+    rows = query.limit(100).all()
+    if not keyword or market_type not in (None, "국내주식"):
+        return rows
+
+    seen = {row.symbol_code for row in rows}
+    result = list(rows)
+    for item in await search_listed_stocks(keyword, 100):
+        if item["symbol_code"] in seen:
+            continue
+        result.append(item)
+        seen.add(item["symbol_code"])
+        if len(result) >= 100:
+            break
+    return result
 
 
 # ⚠️ 반드시 /{symbol_code} 보다 먼저 등록
@@ -98,18 +121,22 @@ async def get_ranking(
 
 
 @router.get("/{symbol_code}", response_model=SecurityResponse, summary="종목 상세 조회")
-def get_security(
+async def get_security(
     symbol_code: str,
     db: Session = Depends(get_db),
 ):
     """
     특정 종목의 기본 정보를 반환합니다. (종목명, 시장구분, 업종코드)
+    DB에 없으면 한국투자증권 현재가의 한글 종목명을 사용합니다.
     실시간 가격은 /price 엔드포인트를 사용하세요.
     """
     security = db.query(ItemMaster).filter(ItemMaster.symbol_code == symbol_code).first()
-    if not security:
+    if security:
+        return security
+    listed = await get_listed_stock(symbol_code)
+    if not listed:
         raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
-    return security
+    return listed
 
 
 @router.get("/{symbol_code}/price", summary="현재가 조회 (KIS API)")

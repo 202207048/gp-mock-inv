@@ -173,6 +173,112 @@ async def get_current_price(symbol_code: str) -> dict:
     }
 
 
+async def get_listed_stock(symbol_code: str) -> dict | None:
+    """
+    DB에 없는 종목의 이름·업종을 모의투자 현재가 응답에서 읽는다.
+    실패하거나 한글명이 없으면 None. 주문 테이블에는 넣지 않는다.
+    """
+    code = (symbol_code or "").strip()
+    if not code or not settings.KIS_APP_KEY:
+        return None
+
+    tr_id = "FHKST01010100"
+    _assert_read_only(tr_id)
+    try:
+        token = await get_kis_token()
+        async with httpx.AsyncClient(verify=False, timeout=10) as client:
+            resp = await client.get(
+                f"{KIS_MOCK_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey": settings.KIS_APP_KEY,
+                    "appsecret": settings.KIS_APP_SECRET,
+                    "tr_id": tr_id,
+                    "custtype": "P",
+                },
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD": code,
+                },
+            )
+        if resp.status_code >= 400:
+            print(f"[KIS 종목명 조회 실패] code={code} status={resp.status_code}")
+            return None
+        output = resp.json().get("output") or {}
+        if not isinstance(output, dict):
+            return None
+        name = str(output.get("hts_kor_isnm") or "").strip()
+        if not name:
+            return None
+        sector = str(output.get("bstp_kor_isnm") or "").strip() or None
+        return {
+            "symbol_code": code,
+            "name": name,
+            "market_type": "국내주식",
+            "sector_code": sector,
+        }
+    except Exception as e:
+        print(f"[KIS 종목명 조회 실패] code={code} {e}")
+        return None
+
+
+def _listed_search_item(item: dict) -> dict | None:
+    if item.get("category") != "stock" or item.get("nationCode") != "KOR":
+        return None
+    code = str(item.get("code") or "").strip()
+    name = str(item.get("name") or "").strip()
+    if not name or len(code) != 6 or any(char not in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" for char in code):
+        return None
+    if item.get("typeCode") not in ("KOSPI", "KOSDAQ"):
+        return None
+    return {
+        "symbol_code": code,
+        "name": name,
+        "market_type": "국내주식",
+        "sector_code": None,
+    }
+
+
+async def search_listed_stocks(keyword: str, limit: int = 100) -> list[dict]:
+    """
+    네이버 종목 검색에서 국내 주식 코드·이름을 찾는다.
+    실패하면 빈 리스트. DB에 있는 종목과 합치는 일은 라우터가 한다.
+    """
+    query = (keyword or "").strip()
+    if not query:
+        return []
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+            resp = await client.get(
+                "https://ac.stock.naver.com/ac",
+                headers=_NAVER_QUOTE_HEADERS,
+                params={"q": query, "target": "stock"},
+            )
+        if resp.status_code >= 400:
+            print(f"[종목검색] 네이버 status={resp.status_code}")
+            return []
+        items = resp.json().get("items")
+    except Exception as e:
+        print(f"[종목검색] 네이버 오류 {e}")
+        return []
+    if not isinstance(items, list):
+        return []
+
+    found = []
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        row = _listed_search_item(item)
+        if not row or row["symbol_code"] in seen:
+            continue
+        seen.add(row["symbol_code"])
+        found.append(row)
+        if len(found) >= limit:
+            break
+    return found
+
+
 # ── 차트 데이터 조회 (모의투자 키) ───────────────────────────
 
 async def get_stock_chart(symbol_code: str, period: str = "D") -> list[dict]:
