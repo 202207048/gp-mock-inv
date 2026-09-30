@@ -23,7 +23,7 @@ services/order_service.py - 주문(매수/매도) 비즈니스 로직
     5. 주문 기록 저장
 """
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -33,6 +33,7 @@ from app.models.order import Order
 from app.models.portfolio import Portfolio
 from app.models.security import ItemMaster
 from app.schemas.order import OrderRequest
+from app.services.trading_costs import POLICY, calculate_costs, equity_market
 
 
 def create_order(
@@ -57,8 +58,10 @@ def create_order(
     """
     if req.quantity <= 0:
         raise HTTPException(status_code=400, detail="주문 수량은 1주 이상이어야 합니다.")
-    if fill_price <= 0:
+    if not fill_price.is_finite() or fill_price <= 0:
         raise HTTPException(status_code=400, detail="현재 시세를 확인할 수 없어 주문하지 않았습니다.")
+    if req.cost_policy_version != POLICY['version']:
+        raise HTTPException(status_code=409, detail="비용 정책이 변경됐습니다. 주문 내용을 다시 확인해 주세요.")
 
     # 계좌를 잠근 뒤 확인한다. (동시 주문 방지)
     account = (
@@ -77,13 +80,16 @@ def create_order(
     if not security:
         raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
 
-    # 총 거래 금액 = 서버 현재가 × 수량
-    total_amount = fill_price * req.quantity
+    try:
+        costs = calculate_costs(fill_price, req.quantity, req.order_type, equity_market(security))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    realized_pnl = None
 
     if req.order_type == "매수":
-        _process_buy(db, account, req, total_amount, fill_price)
+        _process_buy(db, account, req, -costs['cash_delta'], fill_price)
     elif req.order_type == "매도":
-        _process_sell(db, account, req, total_amount)
+        realized_pnl = _process_sell(db, account, req, costs['cash_delta'])
     else:
         raise HTTPException(status_code=400, detail="order_type은 매수 또는 매도여야 합니다.")
 
@@ -94,6 +100,8 @@ def create_order(
         price=fill_price,
         quantity=req.quantity,
         status="체결",
+        realized_pnl=realized_pnl,
+        **costs,
     )
     db.add(order)
     db.commit()
@@ -133,6 +141,8 @@ def _process_buy(
     )
 
     if portfolio:
+        previous_cost = portfolio.acquisition_cost if portfolio.acquisition_cost is not None else portfolio.avg_price * portfolio.hold_quantity
+        portfolio.acquisition_cost = previous_cost + total_amount
         total_qty = portfolio.hold_quantity + req.quantity
         portfolio.avg_price = (
             (portfolio.avg_price * portfolio.hold_quantity + fill_price * req.quantity) / total_qty
@@ -144,6 +154,7 @@ def _process_buy(
             symbol_code=req.symbol_code,
             avg_price=fill_price,
             hold_quantity=req.quantity,
+            acquisition_cost=total_amount,
         )
         db.add(portfolio)
 
@@ -172,9 +183,13 @@ def _process_sell(
     if not portfolio or portfolio.hold_quantity < req.quantity:
         raise HTTPException(status_code=400, detail="보유 수량이 부족합니다.")
 
+    basis = portfolio.acquisition_cost if portfolio.acquisition_cost is not None else portfolio.avg_price * portfolio.hold_quantity
+    allocated = basis if portfolio.hold_quantity == req.quantity else (basis * req.quantity / portfolio.hold_quantity).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP)
+    portfolio.acquisition_cost = basis - allocated
     portfolio.hold_quantity -= req.quantity
     account.withdrawable_cash += total_amount
     account.balance += total_amount
 
     if portfolio.hold_quantity == 0:
         db.delete(portfolio)
+    return total_amount - allocated

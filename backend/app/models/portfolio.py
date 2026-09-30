@@ -43,11 +43,13 @@ class Portfolio(Base):
 
     # 평균 매수 단가 (수익률 계산에 사용)
     # 여러 번 나눠서 샀을 때 평균값으로 계산됨
-    avg_price = Column(Numeric(20, 2), nullable=False)
+    avg_price = Column(Numeric(20, 6), nullable=False)
 
     # 현재 보유 수량
     # 매수하면 증가, 매도하면 감소
     hold_quantity = Column(Integer, nullable=False, default=0)
+    # Remaining acquisition cost, including charged buy commissions.
+    acquisition_cost = Column(Numeric(20, 6), nullable=True)
 
     # 관계 설정
     account = relationship("Account", back_populates="portfolios")

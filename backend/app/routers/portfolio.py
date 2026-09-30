@@ -80,6 +80,7 @@ def get_portfolio(
             "security_name": item.item_master.name if item.item_master else "",
             "avg_price": float(item.avg_price),
             "hold_quantity": item.hold_quantity,
+            "acquisition_cost": float(item.acquisition_cost) if item.acquisition_cost is not None else float(item.avg_price) * item.hold_quantity,
             # 평가금액 = 평균단가 × 보유수량 (실제 현재가 기준은 프론트에서 계산)
             "total_value": float(item.avg_price) * item.hold_quantity,
         })

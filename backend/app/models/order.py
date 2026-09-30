@@ -49,6 +49,13 @@ class Order(Base):
 
     # 주문 수량 (몇 주 주문했는지)
     quantity = Column(Integer, nullable=False)
+    commission = Column(Numeric(20, 2), nullable=True)
+    transaction_tax = Column(Numeric(20, 2), nullable=True)
+    rural_tax = Column(Numeric(20, 2), nullable=True)
+    cash_delta = Column(Numeric(20, 2), nullable=True)
+    realized_pnl = Column(Numeric(20, 6), nullable=True)
+    tax_market = Column(String(12), nullable=True)
+    cost_policy_version = Column(String(40), nullable=True)
 
     # 주문 상태: "대기" → "체결" (또는 "취소", "거부")
     # 모의투자에서는 즉시 "체결"로 바뀜
