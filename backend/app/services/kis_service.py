@@ -170,6 +170,7 @@ async def get_current_price(symbol_code: str) -> dict:
         "high": int(output.get("stck_hgpr", 0)),
         "low": int(output.get("stck_lwpr", 0)),
         "volume": int(output.get("acml_vol", 0)),
+        "name": str(output.get("hts_kor_isnm") or "").strip(),
     }
 
 

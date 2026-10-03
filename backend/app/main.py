@@ -18,6 +18,9 @@ API 경로 구조 (팀장 요청 반영):
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+
+from app.database import engine
 
 # 각 기능별로 분리된 라우터 파일들을 가져옴
 from app.routers import (
@@ -121,6 +124,19 @@ app.include_router(ranking.router, prefix="/api/ranking", tags=["랭킹"])
 # 시장 시세: 홈 상단 코스피·코스닥
 # /api/market/indices
 app.include_router(market.router, prefix="/api/market", tags=["시장 시세"])
+
+
+@app.on_event("startup")
+def ensure_order_columns():
+    """Render는 alembic을 자동 실행하지 않는다. 주문 칸이 없으면 서버 시작 때 추가한다."""
+    statements = (
+        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS price_type VARCHAR(10) NOT NULL DEFAULT '시장가'",
+        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS commission NUMERIC(20, 2) NOT NULL DEFAULT 0",
+        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS tax NUMERIC(20, 2) NOT NULL DEFAULT 0",
+    )
+    with engine.begin() as conn:
+        for statement in statements:
+            conn.execute(text(statement))
 
 
 # 서버 상태 확인용 기본 API

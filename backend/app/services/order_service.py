@@ -23,7 +23,7 @@ services/order_service.py - 주문(매수/매도) 비즈니스 로직
     5. 주문 기록 저장
 """
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -34,12 +34,31 @@ from app.models.portfolio import Portfolio
 from app.models.security import ItemMaster
 from app.schemas.order import OrderRequest
 
+# 연습용 요율. 수수료는 매수·매도, 거래세는 매도만.
+FEE_RATE = Decimal("0.00015")
+SELL_TAX_RATE = Decimal("0.0018")
+
+
+def _won(amount: Decimal) -> Decimal:
+    """원 단위 반올림."""
+    return amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+
+def trade_cost(order_type: str, price: Decimal, quantity: int) -> tuple[Decimal, Decimal, Decimal]:
+    """거래대금, 수수료, 거래세를 계산한다. 매수 거래세는 0이다."""
+    gross = price * quantity
+    commission = _won(gross * FEE_RATE)
+    tax = _won(gross * SELL_TAX_RATE) if order_type == "매도" else Decimal("0")
+    return gross, commission, tax
+
 
 def create_order(
     db: Session,
     req: OrderRequest,
     user_id: int,
     fill_price: Decimal,
+    stock_name: str | None = None,
+    sector_code: str | None = None,
 ) -> Order:
     """
     주문 생성 및 즉시 체결 처리.
@@ -57,8 +76,6 @@ def create_order(
     """
     if req.quantity <= 0:
         raise HTTPException(status_code=400, detail="주문 수량은 1주 이상이어야 합니다.")
-    if fill_price <= 0:
-        raise HTTPException(status_code=400, detail="현재 시세를 확인할 수 없어 주문하지 않았습니다.")
 
     # 계좌를 잠근 뒤 확인한다. (동시 주문 방지)
     account = (
@@ -73,32 +90,79 @@ def create_order(
     if not account:
         raise HTTPException(status_code=404, detail="계좌를 찾을 수 없습니다.")
 
-    security = db.query(ItemMaster).filter(ItemMaster.symbol_code == req.symbol_code).first()
-    if not security:
-        raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
-
-    # 총 거래 금액 = 서버 현재가 × 수량
-    total_amount = fill_price * req.quantity
-
-    if req.order_type == "매수":
-        _process_buy(db, account, req, total_amount, fill_price)
-    elif req.order_type == "매도":
-        _process_sell(db, account, req, total_amount)
-    else:
+    price_type = (req.price_type or "시장가").strip()
+    if price_type not in ("시장가", "지정가"):
+        raise HTTPException(status_code=400, detail="price_type은 시장가 또는 지정가여야 합니다.")
+    if req.order_type not in ("매수", "매도"):
         raise HTTPException(status_code=400, detail="order_type은 매수 또는 매도여야 합니다.")
+
+    _ensure_security(db, req.symbol_code, stock_name, sector_code)
+
+    if price_type == "시장가" and fill_price <= 0:
+        raise HTTPException(status_code=400, detail="현재 시세를 확인할 수 없어 주문하지 않았습니다.")
+
+    order_price = fill_price if price_type == "시장가" else req.price
+    gross, commission, tax = trade_cost(req.order_type, order_price, req.quantity)
+    cash_out = gross + commission
+    cash_in = gross - commission - tax
+
+    if price_type == "시장가":
+        if req.order_type == "매수":
+            _process_buy(db, account, req, cash_out, fill_price)
+        else:
+            _process_sell(db, account, req, cash_in)
+        status = "체결"
+    else:
+        if req.order_type == "매수" and account.withdrawable_cash < cash_out:
+            raise HTTPException(status_code=400, detail="매수 가능 현금이 부족합니다.")
+        if req.order_type == "매도":
+            holding = (
+                db.query(Portfolio)
+                .filter(
+                    Portfolio.account_id == req.account_id,
+                    Portfolio.symbol_code == req.symbol_code,
+                )
+                .with_for_update()
+                .first()
+            )
+            if not holding or holding.hold_quantity < req.quantity:
+                raise HTTPException(status_code=400, detail="보유 수량이 부족합니다.")
+        status = "대기"
 
     order = Order(
         account_id=req.account_id,
         symbol_code=req.symbol_code,
         order_type=req.order_type,
-        price=fill_price,
+        price_type=price_type,
+        price=order_price,
         quantity=req.quantity,
-        status="체결",
+        commission=commission,
+        tax=tax,
+        status=status,
     )
     db.add(order)
     db.commit()
     db.refresh(order)
     return order
+
+
+def _ensure_security(db: Session, symbol_code: str, name: str | None, sector_code: str | None) -> ItemMaster:
+    """주문 전에 종목 행이 없으면 코드와 이름만 넣는다. 이미 있으면 그대로 둔다."""
+    security = db.query(ItemMaster).filter(ItemMaster.symbol_code == symbol_code).first()
+    if security:
+        return security
+    stock_name = (name or "").strip()
+    if not stock_name:
+        raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
+    security = ItemMaster(
+        symbol_code=symbol_code,
+        name=stock_name[:100],
+        market_type="국내주식",
+        sector_code=((sector_code or "").strip()[:20] or None),
+    )
+    db.add(security)
+    db.flush()
+    return security
 
 
 def _process_buy(
@@ -157,7 +221,7 @@ def _process_sell(
     """
     매도 처리 내부 함수.
 
-    체결 금액(total_amount)은 서버 현재가 × 수량이다.
+    total_amount 는 거래대금에서 수수료와 거래세를 뺀 입금액이다.
     """
     portfolio = (
         db.query(Portfolio)
