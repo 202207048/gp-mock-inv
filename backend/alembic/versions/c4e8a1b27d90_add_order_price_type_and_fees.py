@@ -1,7 +1,7 @@
 """add order price_type, commission, and tax
 
 Revision ID: c4e8a1b27d90
-Revises: 2622474e79f5
+Revises: c20260930_cost_policy
 Create Date: 2026-10-03 13:00:00.000000
 
 """
@@ -11,7 +11,7 @@ from alembic import op
 
 
 revision: str = "c4e8a1b27d90"
-down_revision: Union[str, None] = "2622474e79f5"
+down_revision: Union[str, None] = "c20260930_cost_policy"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -24,5 +24,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("ALTER TABLE orders DROP COLUMN IF EXISTS tax")
-    op.execute("ALTER TABLE orders DROP COLUMN IF EXISTS commission")
     op.execute("ALTER TABLE orders DROP COLUMN IF EXISTS price_type")
