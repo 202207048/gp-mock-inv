@@ -15,7 +15,7 @@ class AutomationRequest(BaseModel):
     kind: Literal['scheduled', 'condition']
     scheduled_at: datetime | None = None
     trigger_operator: Literal['gte', 'lte'] | None = None
-    trigger_price: Decimal | None = Field(default=None, gt=0, le=1000000000, decimal_places=0)
+    trigger_price: Decimal | None = Field(default=None, gt=0, le=1000000000)
     expires_at: datetime
     client_request_id: UUID
 
