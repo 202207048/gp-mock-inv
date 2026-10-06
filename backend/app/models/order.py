@@ -53,6 +53,8 @@ class Order(Base):
     commission = Column(Numeric(20, 2), nullable=False, default=0, server_default="0")
     tax = Column(Numeric(20, 2), nullable=False, default=0, server_default="0")
 
+    funding_type = Column(String(10), nullable=False, default="현금", server_default="현금")
+
     # 주문 수량 (몇 주 주문했는지)
     quantity = Column(Integer, nullable=False)
 

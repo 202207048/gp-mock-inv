@@ -1,11 +1,15 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 
 class OrderRequest(BaseModel):
+    funding_type: Literal["현금", "미수"] = "현금"
+    client_request_id: UUID | None = None
+    misu_risk_ack: bool = False
     """
     주문 요청 스키마 (프론트 → 백엔드).
 
@@ -28,6 +32,7 @@ class OrderRequest(BaseModel):
 
 
 class OrderResponse(BaseModel):
+    funding_type: str = "현금"
     """
     주문 응답 스키마 (백엔드 → 프론트).
 

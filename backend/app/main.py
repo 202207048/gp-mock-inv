@@ -25,7 +25,8 @@ from sqlalchemy import text
 
 from app.database import engine
 from app.config import settings
-from app.routers import order_automations
+from app.routers import order_automations, misu
+from app.services.misu_monitor import monitor as misu_monitor
 from app.services.order_automation_service import monitor
 
 # 각 기능별로 분리된 라우터 파일들을 가져옴
@@ -161,6 +162,27 @@ async def start_order_monitor():
 @app.on_event('shutdown')
 async def stop_order_monitor():
     task = getattr(app.state, 'order_monitor', None)
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+app.include_router(misu.router, prefix='/api/trading/misu')
+
+
+@app.on_event('startup')
+async def start_misu_monitor():
+    from sqlalchemy import inspect
+    if not inspect(engine).has_table('misu_debts'):
+        logging.getLogger(__name__).warning('Misu unavailable: run alembic upgrade head')
+        return
+    app.state.misu_monitor = asyncio.create_task(misu_monitor())
+
+
+@app.on_event('shutdown')
+async def stop_misu_monitor():
+    task = getattr(app.state, 'misu_monitor', None)
     if task:
         task.cancel()
         with suppress(asyncio.CancelledError):

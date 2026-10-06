@@ -24,6 +24,9 @@ services/order_service.py - 주문(매수/매도) 비즈니스 로직
 """
 
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, timezone
+from app.services import misu_service as misu
+from app.models.misu import MisuDebt
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -62,6 +65,7 @@ def create_order(
     sector_code: str | None = None,
     commit: bool = True,
     book: dict | None = None,
+    now: datetime | None = None,
 ) -> Order:
     """
     주문 생성 및 즉시 체결 처리.
@@ -77,6 +81,7 @@ def create_order(
         user_id: 현재 로그인한 유저의 ID
         fill_price: 서버가 조회한 현재가 (원)
     """
+    now = now or datetime.now(timezone.utc)
     if req.quantity <= 0:
         raise HTTPException(status_code=400, detail="주문 수량은 1주 이상이어야 합니다.")
 
@@ -87,11 +92,24 @@ def create_order(
             Account.account_id == req.account_id,
             Account.user_id == user_id,
         )
-        .with_for_update()
+        .with_for_update().populate_existing()
         .first()
     )
     if not account:
         raise HTTPException(status_code=404, detail="계좌를 찾을 수 없습니다.")
+
+    if req.funding_type == '미수' and req.client_request_id:
+        previous = db.query(MisuDebt).filter_by(account_id=req.account_id, request_id=str(req.client_request_id)).first()
+        if previous:
+            existing = db.get(Order, previous.order_id)
+            if (existing.symbol_code, existing.quantity, existing.order_type, existing.price_type) != (req.symbol_code, req.quantity, req.order_type, req.price_type):
+                raise HTTPException(409, '같은 요청 번호에 다른 주문 내용이 있습니다.')
+            return existing
+    misu.settle_account(db, account, now)
+    if req.funding_type == '미수' and (req.order_type != '매수' or req.price_type != '시장가'):
+        raise HTTPException(400, '모의 미수거래는 즉시 시장가 매수만 지원합니다.')
+    if req.order_type == '매수':
+        misu.assert_buy_allowed(db, account, req.funding_type == '미수', now)
 
     price_type = (req.price_type or "시장가").strip()
     if price_type not in ORDER_TYPES:
@@ -118,6 +136,11 @@ def create_order(
     cash_out = gross + commission
     cash_in = gross - commission - tax
 
+    shortfall = Decimal(0)
+    if req.funding_type == '미수':
+        shortfall = misu.validate_misu(db, account, req, gross, commission, now)
+        account.withdrawable_cash += shortfall
+        account.balance += shortfall
     if fill_now:
         if req.order_type == "매수":
             _process_buy(db, account, req, cash_out, order_price)
@@ -151,8 +174,14 @@ def create_order(
         commission=commission,
         tax=tax,
         status=status,
+        funding_type=req.funding_type,
     )
     db.add(order)
+    db.flush()
+    if shortfall:
+        misu.record_debt(db, account, order, req, shortfall, now)
+    if fill_now and req.order_type == '매도':
+        misu.defer_sale(db, account, order, cash_in, now)
     if commit:
         db.commit()
         db.refresh(order)
@@ -163,7 +192,7 @@ def create_order(
 
 def check_pending_order(db: Session, order_id: int, account_id: int, user_id: int, book: dict) -> Order:
     """Explicit simulation step, never a mutation on GET. Lock account before order."""
-    account = db.query(Account).filter(Account.account_id == account_id, Account.user_id == user_id).with_for_update().first()
+    account = db.query(Account).filter(Account.account_id == account_id, Account.user_id == user_id).with_for_update().populate_existing().first()
     if not account:
         raise HTTPException(404, "계좌를 찾을 수 없습니다.")
     order = db.query(Order).filter(Order.order_id == order_id, Order.account_id == account_id).with_for_update().populate_existing().first()
@@ -171,6 +200,8 @@ def check_pending_order(db: Session, order_id: int, account_id: int, user_id: in
         raise HTTPException(404, "주문을 찾을 수 없습니다.")
     if order.status != "대기":
         return order
+    now = datetime.now(timezone.utc)
+    misu.settle_account(db, account, now)
     limit = resolve_price("중간가", order.order_type, book) if order.price_type == "중간가" else order.price
     order.price = limit
     gross, order.commission, order.tax = trade_cost(order.order_type, limit, order.quantity)
@@ -181,6 +212,7 @@ def check_pending_order(db: Session, order_id: int, account_id: int, user_id: in
                            price_type=order.price_type, price=price, quantity=order.quantity)
         try:
             if order.order_type == "매수":
+                misu.assert_buy_allowed(db, account, now=now)
                 _process_buy(db, account, req, gross + commission, price)
             else:
                 _process_sell(db, account, req, gross - commission - tax)
@@ -190,6 +222,8 @@ def check_pending_order(db: Session, order_id: int, account_id: int, user_id: in
             order.status = "거부"
         else:
             order.price, order.commission, order.tax, order.status = price, commission, tax, "체결"
+            if order.order_type == "매도":
+                misu.defer_sale(db, account, order, gross - commission - tax, now)
     db.commit()
     db.refresh(order)
     return order

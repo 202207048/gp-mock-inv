@@ -1,3 +1,15 @@
+## 미수 모의거래 추가 (2026-10-07)
+
+새 코드 적용 **전에** `pip install -r requirements.txt`, `alembic upgrade head`로 `e20261007_misu`까지 적용하고 서버를 재시작합니다. 일반 주문·포트폴리오도 미수 장부를 참조하므로 스키마와 서버 코드를 함께 배포해야 합니다. 운영 DB에 이번 로컬 작업으로 마이그레이션을 실행하지 않았습니다.
+
+`POST /api/trading/orders`에 `funding_type="미수"`, UUID `client_request_id`, `misu_risk_ack=true`를 전달합니다. 즉시 시장가 매수, 증거금 50%+수수료, T+2 거래일 17시 한국시간 결제, 기한 경과 다음 거래일부터 반대매매하는 **모의 규칙**입니다. 미수 감시는 시작 시 자동 실행되고 최근 정상 주기가 확인되지 않으면 신규 미수 주문을 거부합니다. 실제 증권사 주문이나 은행 이체를 호출하지 않습니다.
+
+`GET /api/trading/misu/{account_id}`, `POST .../{account_id}/repay` (가상 외부입금: amount·client_request_id), `POST .../{account_id}/settle`을 제공합니다. 소유 계좌만 접근할 수 있고 GET은 장부를 변경하지 않습니다. 부족금이나 미결제 매도대금이 있으면 신규 매수를 제한합니다. 전량 처분 후에도 남은 부족금은 삭제하지 않습니다.
+
+미수 상태 계좌의 매도는 T+2까지 지연하며, 순자산 계산은 `현금 + 주식평가액 + pending_proceeds - misu_debt`입니다. 기존 현금 주문은 즉시 결제 방식을 유지합니다. 실제 증권사별 증거금·소액 예외·이자·수량 산정가격·호가 잔량은 재현하지 않습니다. 임시 휴장은 XKRX 달력 패키지의 갱신 여부를 확인해야 합니다.
+
+검증: `python -m unittest tests.test_misu tests.test_order_types tests.test_order_automations -q` (격리 DB·시세). 미수와 입금 UUID 중복, 휴일·연말, 당일/익일 매도, 감시 재시작, 잔여 채무와 최근 시세 여부를 검사합니다.
+
 # GP 모의투자 백엔드
 
 ## 예약·조건 모의 주문 (2026-10-06)

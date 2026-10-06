@@ -25,3 +25,5 @@ __all__ = [
     "UserSurveyResponse",
     "AiPropensityAdvice",
 ]
+
+from app.models.misu import MisuDebt, MisuSettlement, MisuPayment

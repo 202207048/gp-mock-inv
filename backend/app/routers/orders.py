@@ -11,6 +11,8 @@ routers/orders.py - 주문(매수/매도) API 엔드포인트
 """
 
 from decimal import Decimal
+from datetime import datetime, timezone
+from app.services.order_automation_service import fetch_execution_quote, usable_quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -59,6 +61,10 @@ async def place_order(
         raise HTTPException(status_code=400, detail="지원하지 않는 주문유형입니다.")
     if not db.query(Account).filter(Account.account_id == req.account_id, Account.user_id == current_user.user_id).first():
         raise HTTPException(404, "계좌를 찾을 수 없습니다.")
+    if req.funding_type == '미수':
+        from app.services.misu_monitor import healthy
+        if not healthy():
+            raise HTTPException(503, '미수 결제 감시가 준비되지 않아 주문하지 않았습니다.')
     book = await _book(req.symbol_code) if price_type in BOOK_TYPES else None
 
     known = db.query(ItemMaster).filter(ItemMaster.symbol_code == req.symbol_code).first()
@@ -68,7 +74,14 @@ async def place_order(
 
     if price_type == "시장가":
         try:
-            quote = await get_current_price(req.symbol_code)
+            if req.funding_type == '미수':
+                now = datetime.now(timezone.utc)
+                execution_quote = await fetch_execution_quote(req.symbol_code, now)
+                if not usable_quote(execution_quote, now):
+                    raise ValueError('최근 체결 시세 없음')
+                quote = {'current_price': execution_quote['price']}
+            else:
+                quote = await get_current_price(req.symbol_code)
         except Exception:
             raise HTTPException(status_code=400, detail="현재 시세를 확인할 수 없어 주문하지 않았습니다.")
         fill_price = Decimal(quote.get("current_price") or 0)
@@ -174,6 +187,7 @@ def get_orders(
 def _to_response(order: Order, message: str | None = None) -> OrderResponse:
     """주문 행을 응답 형식으로 바꾼다."""
     return OrderResponse(
+        funding_type=order.funding_type,
         order_id=order.order_id,
         account_id=order.account_id,
         symbol_code=order.symbol_code,

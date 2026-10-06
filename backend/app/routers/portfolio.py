@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.services.misu_service import snapshot
 from app.models.account import Account
 from app.models.portfolio import Portfolio
 from app.models.user import User
@@ -84,7 +85,10 @@ def get_portfolio(
             "total_value": float(item.avg_price) * item.hold_quantity,
         })
 
+    misu = snapshot(db, account_id)
     return {
+        "misu_debt": misu["debt"],
+        "pending_proceeds": misu["pending_proceeds"],
         "account_id": account_id,
         "balance": float(account.balance),                   # 총 자산
         "withdrawable_cash": float(account.withdrawable_cash),  # 매수 가능 현금
