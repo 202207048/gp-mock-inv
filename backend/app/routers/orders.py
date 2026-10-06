@@ -22,7 +22,8 @@ from app.models.security import ItemMaster
 from app.models.user import User
 from app.schemas.order import OrderRequest, OrderResponse
 from app.services.kis_service import get_current_price, get_listed_stock
-from app.services.order_service import create_order
+from app.services.order_service import create_order, check_pending_order
+from app.services.order_book import get_order_book, BOOK_TYPES, ORDER_TYPES
 from app.utils.deps import get_current_user
 
 # prefix는 main.py에서 /api/trading/orders 로 지정
@@ -54,8 +55,11 @@ async def place_order(
         }
     """
     price_type = (req.price_type or "시장가").strip()
-    if price_type not in ("시장가", "지정가"):
-        raise HTTPException(status_code=400, detail="price_type은 시장가 또는 지정가여야 합니다.")
+    if price_type not in ORDER_TYPES:
+        raise HTTPException(status_code=400, detail="지원하지 않는 주문유형입니다.")
+    if not db.query(Account).filter(Account.account_id == req.account_id, Account.user_id == current_user.user_id).first():
+        raise HTTPException(404, "계좌를 찾을 수 없습니다.")
+    book = await _book(req.symbol_code) if price_type in BOOK_TYPES else None
 
     known = db.query(ItemMaster).filter(ItemMaster.symbol_code == req.symbol_code).first()
     stock_name = known.name if known else None
@@ -89,6 +93,7 @@ async def place_order(
         fill_price,
         stock_name=stock_name,
         sector_code=sector_code,
+        book=book,
     )
 
     if order.status == "체결":
@@ -100,9 +105,35 @@ async def place_order(
             message += f", 거래세 {int(order.tax)}원"
         message += "."
     else:
-        message = f"{order.symbol_code} {order.quantity}주 {order.order_type} 지정가 주문을 접수했습니다. 잔고는 아직 변하지 않습니다."
+        message = f"{order.symbol_code} {order.quantity}주 {order.price_type} 주문을 접수했습니다. 대기 중이며 잔고는 아직 변하지 않습니다."
 
     return _to_response(order, message)
+
+
+async def _book(code):
+    try:
+        return await get_order_book(code)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, "호가 조회에 실패했습니다. 주문을 실행하지 않았습니다.")
+
+
+@router.get("/book/{symbol_code}", summary="주문용 최우선 호가 조회")
+async def order_book(symbol_code: str, current_user: User = Depends(get_current_user)):
+    return await _book(symbol_code)
+
+
+@router.post("/{order_id}/check", response_model=OrderResponse, summary="대기 주문의 모의 체결 확인")
+async def check_order(order_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    order = db.query(Order).join(Account).filter(Order.order_id == order_id, Account.user_id == current_user.user_id).first()
+    if not order:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    if order.status != "대기":
+        return _to_response(order)
+    book = await _book(order.symbol_code)
+    result = check_pending_order(db, order_id, order.account_id, current_user.user_id, book)
+    return _to_response(result, "잔고 또는 보유수량 부족으로 거부되었습니다." if result.status == "거부" else f"모의 체결 확인: {result.status}")
 
 
 @router.get("", response_model=list[OrderResponse], summary="주문 내역 조회")
@@ -174,6 +205,10 @@ def cancel_order(
         PUT /api/trading/orders/5/cancel
     """
     # 내 계좌의 주문인지 확인
+    owned = db.query(Order).join(Account).filter(Order.order_id == order_id, Account.user_id == current_user.user_id).first()
+    if not owned:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    db.query(Account).filter(Account.account_id == owned.account_id).with_for_update().first()
     order = (
         db.query(Order)
         .join(Account)
@@ -181,15 +216,15 @@ def cancel_order(
             Order.order_id == order_id,
             Account.user_id == current_user.user_id,
         )
-        .first()
+        .with_for_update().populate_existing().first()
     )
 
     if not order:
         raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다.")
 
     # 이미 체결됐으면 취소 불가
-    if order.status == "체결":
-        raise HTTPException(status_code=400, detail="이미 체결된 주문은 취소할 수 없습니다.")
+    if order.status != "대기":
+        raise HTTPException(status_code=400, detail="대기 주문만 취소할 수 있습니다.")
 
     order.status = "취소"
     db.commit()

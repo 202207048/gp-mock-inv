@@ -33,6 +33,7 @@ from app.models.order import Order
 from app.models.portfolio import Portfolio
 from app.models.security import ItemMaster
 from app.schemas.order import OrderRequest
+from app.services.order_book import ORDER_TYPES, BOOK_TYPES, resolve_price, executable
 
 # 연습용 요율. 수수료는 매수·매도, 거래세는 매도만.
 FEE_RATE = Decimal("0.00015")
@@ -59,6 +60,8 @@ def create_order(
     fill_price: Decimal,
     stock_name: str | None = None,
     sector_code: str | None = None,
+    commit: bool = True,
+    book: dict | None = None,
 ) -> Order:
     """
     주문 생성 및 즉시 체결 처리.
@@ -91,8 +94,8 @@ def create_order(
         raise HTTPException(status_code=404, detail="계좌를 찾을 수 없습니다.")
 
     price_type = (req.price_type or "시장가").strip()
-    if price_type not in ("시장가", "지정가"):
-        raise HTTPException(status_code=400, detail="price_type은 시장가 또는 지정가여야 합니다.")
+    if price_type not in ORDER_TYPES:
+        raise HTTPException(status_code=400, detail="지원하지 않는 주문유형입니다.")
     if req.order_type not in ("매수", "매도"):
         raise HTTPException(status_code=400, detail="order_type은 매수 또는 매도여야 합니다.")
 
@@ -102,13 +105,22 @@ def create_order(
         raise HTTPException(status_code=400, detail="현재 시세를 확인할 수 없어 주문하지 않았습니다.")
 
     order_price = fill_price if price_type == "시장가" else req.price
+    fill_now = price_type == "시장가"
+    if price_type in BOOK_TYPES:
+        try:
+            order_price = resolve_price(price_type, req.order_type, book)
+            fill_now = executable(req.order_type, order_price, req.quantity, book)
+        except (ValueError, TypeError, KeyError):
+            raise HTTPException(400, "유효한 호가가 없어 주문하지 않았습니다.")
+        if fill_now:
+            order_price = Decimal(str(book["ask"] if req.order_type == "매수" else book["bid"]))
     gross, commission, tax = trade_cost(req.order_type, order_price, req.quantity)
     cash_out = gross + commission
     cash_in = gross - commission - tax
 
-    if price_type == "시장가":
+    if fill_now:
         if req.order_type == "매수":
-            _process_buy(db, account, req, cash_out, fill_price)
+            _process_buy(db, account, req, cash_out, order_price)
         else:
             _process_sell(db, account, req, cash_in)
         status = "체결"
@@ -141,6 +153,43 @@ def create_order(
         status=status,
     )
     db.add(order)
+    if commit:
+        db.commit()
+        db.refresh(order)
+    else:
+        db.flush()
+    return order
+
+
+def check_pending_order(db: Session, order_id: int, account_id: int, user_id: int, book: dict) -> Order:
+    """Explicit simulation step, never a mutation on GET. Lock account before order."""
+    account = db.query(Account).filter(Account.account_id == account_id, Account.user_id == user_id).with_for_update().first()
+    if not account:
+        raise HTTPException(404, "계좌를 찾을 수 없습니다.")
+    order = db.query(Order).filter(Order.order_id == order_id, Order.account_id == account_id).with_for_update().populate_existing().first()
+    if not order:
+        raise HTTPException(404, "주문을 찾을 수 없습니다.")
+    if order.status != "대기":
+        return order
+    limit = resolve_price("중간가", order.order_type, book) if order.price_type == "중간가" else order.price
+    order.price = limit
+    gross, order.commission, order.tax = trade_cost(order.order_type, limit, order.quantity)
+    if executable(order.order_type, limit, order.quantity, book):
+        price = Decimal(str(book["ask"] if order.order_type == "매수" else book["bid"]))
+        gross, commission, tax = trade_cost(order.order_type, price, order.quantity)
+        req = OrderRequest(account_id=account_id, symbol_code=order.symbol_code, order_type=order.order_type,
+                           price_type=order.price_type, price=price, quantity=order.quantity)
+        try:
+            if order.order_type == "매수":
+                _process_buy(db, account, req, gross + commission, price)
+            else:
+                _process_sell(db, account, req, gross - commission - tax)
+        except HTTPException as exc:
+            if exc.status_code != 400:
+                raise
+            order.status = "거부"
+        else:
+            order.price, order.commission, order.tax, order.status = price, commission, tax, "체결"
     db.commit()
     db.refresh(order)
     return order

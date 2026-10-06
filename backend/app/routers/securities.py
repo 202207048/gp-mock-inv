@@ -31,11 +31,22 @@ from app.services.kis_service import (
     search_listed_stocks,
 )
 from app.services.chart_history import ChartUnavailable, get_chart_history
+from app.services.market_details import get_market_details
 from app.routers.stock_logos import router as stock_logos_router
 
 # prefix는 main.py에서 /api/stocks 로 지정
 router = APIRouter(tags=["주식 시세"])
 router.include_router(stock_logos_router)
+
+
+@router.get('/{symbol_code}/orderbook', summary='매수·매도 10단계 호가 조회')
+async def get_market_orderbook(symbol_code: str):
+    return await get_market_details(symbol_code, 'orderbook')
+
+
+@router.get('/{symbol_code}/trades', summary='최근 시장 체결 조회')
+async def get_market_trades(symbol_code: str):
+    return await get_market_details(symbol_code, 'trades')
 
 
 @router.get("", response_model=list[SecurityResponse], summary="종목 목록 조회")

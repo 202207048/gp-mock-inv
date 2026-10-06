@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,10 +21,10 @@ class OrderRequest(BaseModel):
     account_id: int = Field(..., description="주문을 넣을 계좌 ID")
     symbol_code: str = Field(..., description="종목 코드 (예: 005930)", max_length=20)
     order_type: str = Field(..., description="주문 타입 (매수, 매도)")
-    price_type: str = Field("시장가", description="시장가 또는 지정가. 없으면 시장가")
+    price_type: Literal["지정가", "시장가", "중간가", "최유리지정가", "최우선지정가"] = "시장가"
     # 시장가에서는 화면 표시용이고, 지정가에서는 이 가격으로 대기 주문을 만든다.
-    price: Decimal = Field(..., gt=0, description="시장가: 화면 표시용. 지정가: 주문 가격")
-    quantity: int = Field(..., gt=0, description="주문 수량 (1주 이상)")
+    price: Decimal = Field(..., gt=0, le=1000000000, allow_inf_nan=False, description="지정가만 고객 입력값 사용. 나머지는 서버 시세/호가로 결정")
+    quantity: int = Field(..., gt=0, le=1000000, description="주문 수량 (1주 이상)")
 
 
 class OrderResponse(BaseModel):
