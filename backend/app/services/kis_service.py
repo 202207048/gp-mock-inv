@@ -167,6 +167,7 @@ async def get_current_price(symbol_code: str) -> dict:
         "symbol_code": symbol_code,
         "current_price": int(output.get("stck_prpr", 0)),
         "change_rate": float(output.get("prdy_ctrt", 0)),
+        "change_amount": int(output["prdy_vrss"]) if output.get("prdy_vrss") not in (None, "") else None,
         "high": int(output.get("stck_hgpr", 0)),
         "low": int(output.get("stck_lwpr", 0)),
         "volume": int(output.get("acml_vol", 0)),
