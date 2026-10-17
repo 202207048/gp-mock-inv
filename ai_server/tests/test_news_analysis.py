@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from app.analyzers.fake import FakeAnalyzer
 from app.main import app, get_analyzer
+from app.provider_manager import RuntimeProviderManager
 from app.schemas import Importance, ImportanceLabel, Sentiment
 
 
@@ -111,6 +112,7 @@ def test_provider_selector_defaults_to_openai(monkeypatch):
     from app.settings import get_ai_provider
 
     monkeypatch.delenv("AI_PROVIDER", raising=False)
+    monkeypatch.setattr(main_module.app.state, "provider_manager", RuntimeProviderManager("openai"))
     marker = object()
     monkeypatch.setattr(main_module, "OpenAINewsAnalyzer", lambda: marker)
     assert get_ai_provider() == "openai"
@@ -120,26 +122,19 @@ def test_provider_selector_defaults_to_openai(monkeypatch):
 def test_provider_selector_can_choose_gemini(monkeypatch):
     import app.main as main_module
 
-    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setattr(main_module.app.state, "provider_manager", RuntimeProviderManager("gemini"))
     marker = object()
     monkeypatch.setattr(main_module, "GeminiNewsAnalyzer", lambda: marker)
     assert get_analyzer() is marker
 
-
-def test_provider_selector_rejects_unknown_value(monkeypatch):
-    from fastapi import HTTPException
-
-    monkeypatch.setenv("AI_PROVIDER", "other")
-    with pytest.raises(HTTPException) as captured:
-        get_analyzer()
-    assert captured.value.status_code == 500
-    assert "AI_PROVIDER" in captured.value.detail
-
-
 def test_analyzer_unavailable(monkeypatch):
     import app.analyzers.gemini as gemini_module
 
-    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setattr(
+        app.state,
+        "provider_manager",
+        RuntimeProviderManager("gemini", gemini_key_getter=lambda: None),
+    )
     monkeypatch.setattr(gemini_module, "get_gemini_api_key", lambda: None)
     with TestClient(app) as client:
         response = client.post("/analyze/news", json={

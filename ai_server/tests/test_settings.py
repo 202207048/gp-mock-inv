@@ -1,6 +1,6 @@
 import pytest
 
-from app.settings import InvalidAIProviderError, get_ai_provider
+from app.settings import DEFAULT_GEMINI_MODEL, InvalidAIProviderError, get_ai_provider
 
 
 def test_ai_provider_defaults_to_openai(monkeypatch):
@@ -19,3 +19,6 @@ def test_ai_provider_rejects_unsupported_values(monkeypatch, value):
     monkeypatch.setenv("AI_PROVIDER", value)
     with pytest.raises(InvalidAIProviderError, match="AI_PROVIDER"):
         get_ai_provider()
+
+def test_gemini_default_model_is_38_flash():
+    assert DEFAULT_GEMINI_MODEL == "gemini-3.8-flash"
