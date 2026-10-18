@@ -6,9 +6,9 @@ routers/ai.py - AI 및 투자성향 설문 API 엔드포인트
     POST /api/ai/survey             → 설문 저장 후 Gemini 투자성향 분석
     GET  /api/ai/propensity         → 내 투자성향 분석 결과 조회
     GET  /api/ai/coach              → 시세 요약 기반 모의투자 조언
-    GET  /api/ai/news-summary/{code}→ 오늘 등락과 종목 뉴스를 연결한 짧은 설명
 
     [AI 서버 연동 - AI팀 서버가 필요]
+    GET  /api/ai/news-summary/{code}→ 오늘 등락과 종목 뉴스를 연결한 짧은 설명
     GET  /api/ai/recommend          → AI 종목 추천
     GET  /api/ai/pattern            → 매매 패턴 분석
 """
@@ -30,7 +30,10 @@ from app.models.portfolio import Portfolio
 from app.models.security import ItemMaster
 from app.models.user import User
 from app.models.user_survey_response import UserSurveyResponse
-from app.services.ai_service import analyze_survey_answers, generate_coach_advice, generate_news_brief
+from app.services.ai_service import analyze_survey_answers, generate_coach_advice
+from app.services.news_summary_service import (
+    NEWS_DISCLAIMER, NewsSummaryUnavailable, get_summary_provider, summarize_stock_news,
+)
 from app.services.kis_service import get_current_price
 from app.services.news_service import get_news_by_symbol
 from app.utils.deps import get_current_user
@@ -383,14 +386,14 @@ _summary_cache: dict = {}
 _SUMMARY_CACHE_SECONDS = 180
 
 
-@router.get("/news-summary/{symbol_code}", summary="종목 뉴스 AI 요약 (Gemini)")
+@router.get("/news-summary/{symbol_code}", summary="종목 뉴스 AI 요약 (AI Server)")
 async def ai_news_summary(
     symbol_code: str,
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    종목 뉴스와 오늘 등락률을 Gemini에 보내, 등락과 같이 보이는 이슈를 짧게 정리합니다.
+    종목 뉴스와 오늘 등락률을 AI Server에 보내, 등락과 같이 보이는 이슈를 짧게 정리합니다.
     기사에 없다고 해서 그 이슈를 등락 원인으로 단정하지 않습니다. 매수·매도 지시는 하지 않습니다.
 
     사용 예시:
@@ -412,9 +415,16 @@ async def ai_news_summary(
         raise HTTPException(status_code=400, detail="종목 코드를 입력해 주세요.")
 
     now = datetime.utcnow()
-    cached = _summary_cache.get(code)
-    if cached and cached.get("expires_at") and now < cached["expires_at"]:
-        return cached["data"]
+    selected = None
+    try:
+        selected = await get_summary_provider(settings.AI_SERVER_URL)
+    except NewsSummaryUnavailable:
+        pass
+    if selected is not None:
+        cache_key = (code, selected.provider, selected.model)
+        cached = _summary_cache.get(cache_key)
+        if cached and cached.get("expires_at") and now < cached["expires_at"]:
+            return cached["data"]
 
     articles = await get_news_by_symbol(code, 5)
     item = db.query(ItemMaster).filter(ItemMaster.symbol_code == code).first()
@@ -424,32 +434,51 @@ async def ai_news_summary(
     try:
         quote = await get_current_price(code)
         change_rate = quote.get("change_rate")
-    except Exception as e:
-        print(f"[news-summary] 현재가 조회 실패: {e}")
+    except Exception:
+        # Quote provider exceptions may include credential-bearing request details.
+        pass
 
-    if not any(str(article.get("title") or "").strip() for article in articles):
-        result = {
-            "symbol_code": code,
-            "name": name,
-            "headline": "표시할 뉴스가 없습니다.",
-            "change_rate": change_rate,
-            "summary": [],
-            "tags": [],
-            "disclaimer": "모의투자 연습용 설명이며 투자 권유가 아닙니다.",
+    usable_articles = [
+        {
+            "title": str(article.get("title") or "").strip(),
+            "summary": str(article.get("summary") or "").strip(),
+            "source": article.get("source"),
+            "date": article.get("date"),
         }
-    else:
-        brief = await asyncio.to_thread(
-            generate_news_brief, code, name, articles, change_rate
-        )
-        result = {
-            "symbol_code": code,
-            "name": name,
-            "change_rate": change_rate,
-            **brief,
-        }
-
-    _summary_cache[code] = {
-        "data": result,
-        "expires_at": now + timedelta(seconds=_SUMMARY_CACHE_SECONDS),
+        for article in articles[:5]
+        if str(article.get("title") or "").strip()
+    ]
+    result = {
+        "symbol_code": code,
+        "name": name,
+        "change_rate": change_rate,
+        "headline": "표시할 뉴스가 없습니다.",
+        "summary": [],
+        "tags": [],
+        "disclaimer": NEWS_DISCLAIMER,
     }
+    cache_identity = selected
+    if usable_articles:
+        # Preserve the previous HTTP 200/title-list degradation contract.
+        result.update(
+            headline="뉴스 요약을 잠시 사용할 수 없습니다.",
+            summary=[article["title"] for article in usable_articles[:3]],
+        )
+        try:
+            brief = await summarize_stock_news(settings.AI_SERVER_URL, {
+                "symbol_code": code, "name": name, "change_rate": change_rate,
+                "articles": usable_articles,
+            })
+        except NewsSummaryUnavailable:
+            return result  # Do not cache transient failures as successful summaries.
+        result.update(brief.brief())
+        # A switch may have occurred after GET /settings/provider. Use actual metadata.
+        cache_identity = brief
+
+    # Empty news can also mean a transient feed failure; do not freeze it in cache.
+    if usable_articles and cache_identity is not None:
+        _summary_cache[(code, cache_identity.provider, cache_identity.model)] = {
+            "data": result,
+            "expires_at": datetime.utcnow() + timedelta(seconds=_SUMMARY_CACHE_SECONDS),
+        }
     return result
