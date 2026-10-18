@@ -196,7 +196,7 @@ Provider 선택 UI는 일반 사용자 기능으로 공개하기보다 관리/�
 
 ## 검증 상태
 
-- Provider 전환 기능 구현 후 AI Server 전체 테스트: **65 passed**
+- Provider 전환 기능 구현 후 AI Server 전체 테스트: **72 passed**
 - 해당 변경의 `git diff --check`: **PASS**
 - Provider 전환 기능의 테스트/구현 과정에서 live provider API 호출: **0**
 - 기존 검증: GPT-6 Luna endpoint smoke test에서 HTTP 200 및 예시 분석 응답을 확인했습니다.
