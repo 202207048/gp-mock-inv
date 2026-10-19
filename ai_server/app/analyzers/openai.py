@@ -1,4 +1,7 @@
 from typing import Any
+from uuid import UUID
+
+from ..execution import ProviderExecutionResult, execute_provider_call, openai_usage
 
 from ..schemas import Article, ArticleAnalysis, Importance, NewsSentimentBatch
 from ..settings import (
@@ -17,6 +20,8 @@ from .base import (
 class OpenAINewsAnalyzer:
     """Analyze a news batch with one Responses API structured output call."""
 
+    provider = "openai"
+
     def __init__(
         self,
         *,
@@ -29,6 +34,7 @@ class OpenAINewsAnalyzer:
         if not self._api_key:
             raise AnalyzerUnavailableError("OPENAI_API_KEY is not configured")
         self._model = model
+        self.model = model
         self._reasoning_effort = reasoning_effort
         if client is None:
             from openai import OpenAI
@@ -39,16 +45,24 @@ class OpenAINewsAnalyzer:
         self.last_usage: dict[str, int | None] = {}
 
     def analyze(self, articles: list[Article]) -> list[ArticleAnalysis]:
-        try:
-            response = self._client.responses.parse(
-                model=self._model,
-                input=build_news_analysis_prompt(articles, minimal_input=True),
-                reasoning={"effort": self._reasoning_effort},
-                text_format=NewsSentimentBatch,
-            )
-        except Exception as exc:
-            raise AnalyzerError("OpenAI news analysis request failed") from exc
+        return self.analyze_with_metadata(articles).result
 
+    def analyze_with_metadata(
+        self, articles: list[Article], *, trace_id: UUID | None = None,
+    ) -> ProviderExecutionResult[list[ArticleAnalysis]]:
+        prompt = build_news_analysis_prompt(articles, minimal_input=True)
+        call = lambda: self._client.responses.parse(
+            model=self._model, input=prompt,
+            reasoning={"effort": self._reasoning_effort}, text_format=NewsSentimentBatch,
+        )
+        return execute_provider_call(
+            trace_id=trace_id, provider=self.provider, model=self._model,
+            call=call, parse=lambda response: self._parse_response(response, articles),
+            usage=openai_usage, error_type=AnalyzerError,
+            error_message="OpenAI news analysis request failed",
+        )
+
+    def _parse_response(self, response: Any, articles: list[Article]) -> list[ArticleAnalysis]:
         self.last_http_status = 200
         self.last_usage = _usage_counts(getattr(response, "usage", None))
         batch = getattr(response, "output_parsed", None)

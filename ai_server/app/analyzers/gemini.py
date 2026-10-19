@@ -1,4 +1,7 @@
 from typing import Any
+from uuid import UUID
+
+from ..execution import ProviderExecutionResult, execute_provider_call, gemini_usage
 
 from ..schemas import Article, ArticleAnalysis, Importance, NewsSentimentBatch
 from ..settings import GEMINI_MODEL, get_gemini_api_key
@@ -13,6 +16,8 @@ from .base import (
 class GeminiNewsAnalyzer:
     """One structured Gemini request per batch of articles."""
 
+    provider = "gemini"
+
     def __init__(
         self,
         *,
@@ -24,6 +29,7 @@ class GeminiNewsAnalyzer:
         if not self._api_key:
             raise AnalyzerUnavailableError("GEMINI_API_KEY is not configured")
         self._model = model
+        self.model = model
         if client is None:
             from google import genai
 
@@ -31,21 +37,28 @@ class GeminiNewsAnalyzer:
         self._client = client
 
     def analyze(self, articles: list[Article]) -> list[ArticleAnalysis]:
+        return self.analyze_with_metadata(articles).result
+
+    def analyze_with_metadata(
+        self, articles: list[Article], *, trace_id: UUID | None = None,
+    ) -> ProviderExecutionResult[list[ArticleAnalysis]]:
         from google.genai import types
+        prompt = build_news_analysis_prompt(articles)
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_json_schema=NewsSentimentBatch.model_json_schema(), temperature=0,
+        )
+        call = lambda: self._client.models.generate_content(
+            model=self._model, contents=prompt, config=config,
+        )
+        return execute_provider_call(
+            trace_id=trace_id, provider=self.provider, model=self._model,
+            call=call, parse=lambda response: self._parse_response(response, articles),
+            usage=gemini_usage, error_type=AnalyzerError,
+            error_message="Gemini sentiment request failed",
+        )
 
-        try:
-            response = self._client.models.generate_content(
-                model=self._model,
-                contents=build_news_analysis_prompt(articles),
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_json_schema=NewsSentimentBatch.model_json_schema(),
-                    temperature=0,
-                ),
-            )
-        except Exception as exc:
-            raise AnalyzerError("Gemini sentiment request failed") from exc
-
+    def _parse_response(self, response: Any, articles: list[Article]) -> list[ArticleAnalysis]:
         raw = getattr(response, "text", None)
         if not isinstance(raw, str) or not raw.strip():
             raise AnalyzerResponseError("Gemini returned an empty response")

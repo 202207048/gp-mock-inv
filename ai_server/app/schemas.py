@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from uuid import UUID
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -8,6 +9,29 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 class Schema(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+
+
+TokenCount = Annotated[int, Field(strict=True, ge=0)]
+
+
+class UsageMetrics(Schema):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    input_tokens: TokenCount | None = None
+    output_tokens: TokenCount | None = None
+    reasoning_tokens: TokenCount | None = None
+    total_tokens: TokenCount | None = None
+    cached_tokens: TokenCount | None = None
+
+
+class AIExecutionMetadata(Schema):
+    """One observed SDK generation attempt, including failed attempts."""
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+    trace_id: UUID
+    operation_id: UUID
+    provider: Literal["openai", "gemini"]
+    model: str = Field(strict=True, min_length=1, max_length=200)
+    usage: UsageMetrics
+    latency_ms: float = Field(ge=0, allow_inf_nan=False)
 
 
 class ProviderSettingsResponse(Schema):
@@ -80,6 +104,7 @@ class NewsSentimentBatch(Schema):
 
 
 class NewsAnalysisRequest(Schema):
+    include_ai_metadata: bool = False
     articles: list[Article] = Field(min_length=1, max_length=50)
 
     @model_validator(mode="after")
@@ -91,6 +116,7 @@ class NewsAnalysisRequest(Schema):
 
 
 class NewsAnalysisResponse(Schema):
+    ai: AIExecutionMetadata | None = None
     articles: list[ArticleAnalysis]
 
 
@@ -107,6 +133,7 @@ class StockNewsArticle(Schema):
 
 
 class StockNewsSummaryRequest(Schema):
+    include_ai_metadata: bool = False
     symbol_code: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=200)
     change_rate: float | None = Field(default=None, allow_inf_nan=False)
@@ -121,6 +148,7 @@ class StockNewsBrief(Schema):
 
 
 class StockNewsSummaryResponse(StockNewsBrief):
+    ai: AIExecutionMetadata | None = None
     # Internal metadata lets Backend cache by the provider actually used.
     provider: Literal["openai", "gemini"]
     model: str = Field(min_length=1, max_length=200)

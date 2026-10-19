@@ -1,4 +1,7 @@
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from .execution import normalize_trace_id
 
 from .analyzers.base import AnalyzerError, AnalyzerUnavailableError, NewsAnalyzer
 from .analyzers.gemini import GeminiNewsAnalyzer
@@ -21,6 +24,23 @@ from .summarizers.gemini import GeminiStockNewsSummarizer
 
 app = FastAPI(title="News AI Analysis")
 app.state.provider_manager = RuntimeProviderManager(get_ai_provider())
+
+
+@app.middleware("http")
+async def trace_request(request: Request, call_next):
+    request.state.trace_id = normalize_trace_id(request.headers.get("X-Trace-ID"))
+    response = await call_next(request)
+    response.headers["X-Trace-ID"] = str(request.state.trace_id)
+    return response
+
+
+def _execution_failure(
+    detail: str, exc: AnalyzerError | SummarizerError, include_metadata: bool,
+) -> JSONResponse:
+    body = {"detail": detail}
+    if include_metadata and exc.metadata is not None:
+        body["ai"] = exc.metadata.model_dump(mode="json")
+    return JSONResponse(status_code=502, content=body)
 
 
 def get_analyzer() -> NewsAnalyzer:
@@ -56,15 +76,23 @@ def update_provider_settings(request: ProviderSwitchRequest) -> ProviderSettings
     return ProviderSettingsResponse(provider=provider, model=model)
 
 
-@app.post("/analyze/news", response_model=NewsAnalysisResponse)
+@app.post("/analyze/news", response_model=NewsAnalysisResponse, response_model_exclude_unset=True)
 def analyze_news(
     request: NewsAnalysisRequest,
+    http_request: Request,
     analyzer: NewsAnalyzer = Depends(get_analyzer),
-) -> NewsAnalysisResponse:
+) -> NewsAnalysisResponse | JSONResponse:
     try:
+        measured = getattr(analyzer, "analyze_with_metadata", None)
+        if measured is not None:
+            outcome = measured(request.articles, trace_id=http_request.state.trace_id)
+            return NewsAnalysisResponse(
+                articles=outcome.result,
+                **({"ai": outcome.metadata} if request.include_ai_metadata else {}),
+            )
         return NewsAnalysisResponse(articles=analyzer.analyze(request.articles))
     except AnalyzerError as exc:
-        raise HTTPException(status_code=502, detail="News analysis failed") from exc
+        return _execution_failure("News analysis failed", exc, request.include_ai_metadata)
 
 
 def get_stock_news_summarizer() -> StockNewsSummarizer:
@@ -80,15 +108,25 @@ def get_stock_news_summarizer() -> StockNewsSummarizer:
         raise HTTPException(502, detail="Stock-news summarizer initialization failed") from exc
 
 
-@app.post("/summarize/stock-news", response_model=StockNewsSummaryResponse)
+@app.post("/summarize/stock-news", response_model=StockNewsSummaryResponse, response_model_exclude_unset=True)
 def summarize_stock_news(
     request: StockNewsSummaryRequest,
+    http_request: Request,
     summarizer: StockNewsSummarizer = Depends(get_stock_news_summarizer),
-) -> StockNewsSummaryResponse:
+) -> StockNewsSummaryResponse | JSONResponse:
     try:
+        measured = getattr(summarizer, "summarize_with_metadata", None)
+        if measured is not None:
+            outcome = measured(request, trace_id=http_request.state.trace_id)
+            return StockNewsSummaryResponse(
+                **outcome.result.model_dump(), provider=summarizer.provider,
+                model=summarizer.model, **({"ai": outcome.metadata} if request.include_ai_metadata else {}),
+            )
         brief = summarizer.summarize(request)
         return StockNewsSummaryResponse(
             **brief.model_dump(), provider=summarizer.provider, model=summarizer.model,
         )
-    except (SummarizerError, ValueError) as exc:
+    except SummarizerError as exc:
+        return _execution_failure("Stock-news summary failed", exc, request.include_ai_metadata)
+    except ValueError as exc:
         raise HTTPException(502, detail="Stock-news summary failed") from exc

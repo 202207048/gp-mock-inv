@@ -1,4 +1,7 @@
 from typing import Any
+from uuid import UUID
+
+from ..execution import ProviderExecutionResult, execute_provider_call, gemini_usage
 
 from ..schemas import StockNewsBrief, StockNewsSummaryRequest
 from ..settings import GEMINI_MODEL, get_gemini_api_key
@@ -23,19 +26,29 @@ class GeminiStockNewsSummarizer:
         self._client = client
 
     def summarize(self, request: StockNewsSummaryRequest) -> StockNewsBrief:
+        return self.summarize_with_metadata(request).result
+
+    def summarize_with_metadata(
+        self, request: StockNewsSummaryRequest, *, trace_id: UUID | None = None,
+    ) -> ProviderExecutionResult[StockNewsBrief]:
         from google.genai import types
-        try:
-            response = self._client.models.generate_content(
-                model=self.model, contents=build_stock_news_prompt(request),
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_json_schema=StockNewsBrief.model_json_schema(),
-                    temperature=0,
-                ),
-            )
-            raw = getattr(response, "text", None)
-            if not isinstance(raw, str) or not raw.strip():
-                raise ValueError("Missing structured summary")
-            return StockNewsBrief.model_validate_json(raw)
-        except Exception as exc:
-            raise SummarizerError("Gemini stock-news summary failed") from exc
+        prompt = build_stock_news_prompt(request)
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_json_schema=StockNewsBrief.model_json_schema(), temperature=0,
+        )
+        call = lambda: self._client.models.generate_content(
+            model=self.model, contents=prompt, config=config,
+        )
+        return execute_provider_call(
+            trace_id=trace_id, provider=self.provider, model=self.model,
+            call=call, parse=self._parse_response, usage=gemini_usage,
+            error_type=SummarizerError, error_message="Gemini stock-news summary failed",
+        )
+
+    @staticmethod
+    def _parse_response(response: Any) -> StockNewsBrief:
+        raw = getattr(response, "text", None)
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError("Missing structured summary")
+        return StockNewsBrief.model_validate_json(raw)

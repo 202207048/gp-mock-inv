@@ -14,11 +14,12 @@ routers/ai.py - AI 및 투자성향 설문 API 엔드포인트
 """
 
 from datetime import datetime, timedelta
+from uuid import uuid4
 import asyncio
 import json
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -389,6 +390,8 @@ _SUMMARY_CACHE_SECONDS = 180
 @router.get("/news-summary/{symbol_code}", summary="종목 뉴스 AI 요약 (AI Server)")
 async def ai_news_summary(
     symbol_code: str,
+    request: Request,
+    response: Response,
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -410,6 +413,11 @@ async def ai_news_summary(
             "disclaimer": "모의투자 연습용 설명이며 투자 권유가 아닙니다."
         }
     """
+    # Each authenticated HTTP request gets a new correlation ID, including cache hits.
+    trace_id = uuid4()
+    response.headers["X-Trace-ID"] = str(trace_id)
+    request.state.trace_id = trace_id
+    request.state.ai_execution = None  # Cache/no-input/fallback is not a new generation.
     code = (symbol_code or "").strip()
     if not code:
         raise HTTPException(status_code=400, detail="종목 코드를 입력해 주세요.")
@@ -417,7 +425,7 @@ async def ai_news_summary(
     now = datetime.utcnow()
     selected = None
     try:
-        selected = await get_summary_provider(settings.AI_SERVER_URL)
+        selected = await get_summary_provider(settings.AI_SERVER_URL, trace_id=trace_id)
     except NewsSummaryUnavailable:
         pass
     if selected is not None:
@@ -467,10 +475,11 @@ async def ai_news_summary(
         try:
             brief = await summarize_stock_news(settings.AI_SERVER_URL, {
                 "symbol_code": code, "name": name, "change_rate": change_rate,
-                "articles": usable_articles,
-            })
+                "articles": usable_articles, "include_ai_metadata": True,
+            }, trace_id=trace_id)
         except NewsSummaryUnavailable:
             return result  # Do not cache transient failures as successful summaries.
+        request.state.ai_execution = brief.ai
         result.update(brief.brief())
         # A switch may have occurred after GET /settings/provider. Use actual metadata.
         cache_identity = brief

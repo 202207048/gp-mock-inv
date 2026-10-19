@@ -1,11 +1,15 @@
 import json
 from typing import Protocol
 
-from ..schemas import StockNewsBrief, StockNewsSummaryRequest
+from ..schemas import AIExecutionMetadata, StockNewsBrief, StockNewsSummaryRequest
 
 
 class SummarizerError(Exception):
     """A stock-news summary could not be generated or validated."""
+
+    def __init__(self, message: str, *, metadata: AIExecutionMetadata | None = None) -> None:
+        super().__init__(message)
+        self.metadata = metadata
 
 
 class SummarizerUnavailableError(SummarizerError):
@@ -44,5 +48,5 @@ def build_stock_news_prompt(request: StockNewsSummaryRequest) -> str:
         "기사와 제공된 등락률 외의 숫자, 사건, 이유를 만들지 마세요. "
         "매수/매도 지시, 목표가, 수익률 보장은 금지합니다. "
         "headline, summary, tags, disclaimer만 포함한 JSON으로 반환하세요.\n\n"
-        + json.dumps(request.model_dump(mode="json"), ensure_ascii=False)
+        + json.dumps(request.model_dump(mode="json", exclude={"include_ai_metadata"}), ensure_ascii=False)
     )

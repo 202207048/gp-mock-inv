@@ -1,11 +1,15 @@
 import json
 from typing import Protocol
 
-from ..schemas import Article, ArticleAnalysis
+from ..schemas import AIExecutionMetadata, Article, ArticleAnalysis
 
 
 class AnalyzerError(Exception):
     """A configured analyzer failed to return a valid analysis."""
+
+    def __init__(self, message: str, *, metadata: AIExecutionMetadata | None = None) -> None:
+        super().__init__(message)
+        self.metadata = metadata
 
 
 class AnalyzerUnavailableError(AnalyzerError):
