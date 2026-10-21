@@ -10,6 +10,22 @@
 - 같은 시각의 `order_id`는 결정적 보조 정렬일 뿐 실제 체결 순서의 증거는 아닙니다. 지연 주문의 순서가 모호하면 향후 Fact Bundle에서 unavailable로 처리해야 합니다.
 - 실제 DB에는 이번 개발 작업으로 migration을 적용하지 않았습니다. 개발/운영 환경 적용은 별도로 검증해야 합니다.
 
+## 보유종목 브리핑용 사실 API
+
+`GET /api/ai/portfolio-brief/facts/{symbol_code}?account_id={id}`는 기존 로그인 인증이 필요합니다.
+본인 계좌만 조회하며 다른 사용자/존재하지 않는 계좌와 현재 미보유 종목은 404입니다.
+AI Server나 LLM을 호출하지 않고 holding, position, trades, recent_news, price_context, limitations를 반환합니다.
+
+- holding은 Portfolio 수량·평균단가를 그대로 사용합니다. 현재가가 있으면 평가손익과 수익률을 계산하며 수수료·세금을 다시 반영하지 않습니다. Decimal은 기존 주문 계약처럼 JSON 문자열로 직렬화됩니다.
+- 체결 주문의 filled_at만 사용합니다. 해당 계좌·종목의 legacy NULL 체결이 하나라도 있으면 position.available=false, reason=legacy_execution_time_unavailable, trades=[]입니다. created_at fallback은 없습니다.
+- 음수 재생·잘못된 체결 자료는 invalid_trade_history, 보유수량 불일치는 portfolio_quantity_mismatch로 position만 unavailable 처리합니다. 핵심 DB 조회 오류는 정상 응답으로 숨기지 않습니다.
+- 동일 시각의 같은 방향 체결은 묶어서 처리합니다. 여러 매수로 시작하면 started_at은 알려져도 opening_order_id/opening_price는 null이고 opening_trade_ambiguous를 표시합니다.
+- 동일 시각의 혼합 매수·매도는 그룹 직전 수량이 매도 총량보다 클 때만 순서와 무관하게 기존 position을 유지하며 순수량을 반영합니다. 그 외에는 0 도달·재시작 가능성을 배제할 수 없어 ambiguous_execution_order입니다. order_id 보조 정렬은 실제 체결 순서가 아닙니다.
+- 시세 실패·유효하지 않은 현재가는 current_price_unavailable로 표시하고 current_price/unrealized_pnl/return_rate를 null로 둡니다. 평균단가가 0 이하이면 파생값을 계산하지 않고 invalid_average_price를 표시합니다.
+- 뉴스는 기존 service의 최신 5개만 사용합니다. 빈 목록과 수집 실패를 기존 service에서 구분할 수 없으므로 둘 다 news_unavailable로 표시합니다. 기사 URL을 추가 방문하지 않습니다.
+- historical_news_unavailable, historical_price_unavailable은 현재 버전의 범위 제한입니다. 과거 매수시점 뉴스라고 주장하지 않습니다. price_context.position_start_price와 change_since_position_start는 null이며 opening fill price로 대체하지 않습니다.
+- holding과 주문은 소유 계좌 범위의 단일 DB 조회로 읽습니다. 시세·뉴스는 그 후 조회하므로 동일 시각의 시장 스냅샷을 보장하지 않습니다. 새 테이블이나 추가 migration은 없습니다.
+
 ## 미수 모의거래 추가 (2026-10-07)
 
 새 코드 적용 **전에** `pip install -r requirements.txt`, `alembic upgrade head`로 `e20261007_misu`까지 적용하고 서버를 재시작합니다. 일반 주문·포트폴리오도 미수 장부를 참조하므로 스키마와 서버 코드를 함께 배포해야 합니다. 운영 DB에 이번 로컬 작업으로 마이그레이션을 실행하지 않았습니다.

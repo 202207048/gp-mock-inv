@@ -38,6 +38,10 @@ from app.services.news_summary_service import (
 from app.services.kis_service import get_current_price
 from app.services.news_service import get_news_by_symbol
 from app.utils.deps import get_current_user
+from app.schemas.portfolio_brief import PortfolioBriefFacts
+from app.services.portfolio_brief_service import (
+    PortfolioFactsSnapshot, build_portfolio_facts, load_portfolio_facts,
+)
 
 # prefix는 main.py에서 /api/ai 로 지정
 router = APIRouter(tags=["AI/설문"])
@@ -491,3 +495,21 @@ async def ai_news_summary(
             "expires_at": datetime.utcnow() + timedelta(seconds=_SUMMARY_CACHE_SECONDS),
         }
     return result
+
+
+def get_portfolio_facts_snapshot(
+    symbol_code: str,
+    account_id: int = Query(..., gt=0, description="본인 계좌 번호"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PortfolioFactsSnapshot:
+    # Sync DB work runs in FastAPI's dependency thread pool.
+    return load_portfolio_facts(db, account_id, symbol_code, current_user.user_id)
+
+
+@router.get("/portfolio-brief/facts/{symbol_code}", response_model=PortfolioBriefFacts,
+            summary="현재 보유종목 브리핑용 사실 데이터")
+async def portfolio_brief_facts(
+    snapshot: PortfolioFactsSnapshot = Depends(get_portfolio_facts_snapshot),
+) -> PortfolioBriefFacts:
+    return await build_portfolio_facts(snapshot)
