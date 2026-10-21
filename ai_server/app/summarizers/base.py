@@ -48,5 +48,5 @@ def build_stock_news_prompt(request: StockNewsSummaryRequest) -> str:
         "기사와 제공된 등락률 외의 숫자, 사건, 이유를 만들지 마세요. "
         "매수/매도 지시, 목표가, 수익률 보장은 금지합니다. "
         "headline, summary, tags, disclaimer만 포함한 JSON으로 반환하세요.\n\n"
-        + json.dumps(request.model_dump(mode="json", exclude={"include_ai_metadata"}), ensure_ascii=False)
+        + json.dumps(request.model_dump(mode="json", exclude={"include_ai_metadata", "profile"}), ensure_ascii=False)
     )

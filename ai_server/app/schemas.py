@@ -3,7 +3,7 @@ from enum import Enum
 from uuid import UUID
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, computed_field, model_validator
 
 
 class Schema(BaseModel):
@@ -23,6 +23,23 @@ class UsageMetrics(Schema):
     cached_tokens: TokenCount | None = None
 
 
+ProfileId = Annotated[str, StringConstraints(
+    strict=True, strip_whitespace=False, pattern=r"^[a-z][a-z0-9_-]{0,31}$",
+)]
+ProfileRevision = Annotated[int, Field(strict=True, ge=1)]
+ProfileTask = Literal["news_analysis", "stock_news_summary"]
+
+
+class ModelProfileCatalogEntry(Schema):
+    id: ProfileId
+    revision: ProfileRevision
+    display_name: str
+    description: str
+    category: str
+    enabled: bool
+    supported_tasks: tuple[ProfileTask, ...]
+
+
 class AIExecutionMetadata(Schema):
     """One observed SDK generation attempt, including failed attempts."""
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
@@ -30,8 +47,17 @@ class AIExecutionMetadata(Schema):
     operation_id: UUID
     provider: Literal["openai", "gemini"]
     model: str = Field(strict=True, min_length=1, max_length=200)
+    profile_id: ProfileId | None = None
+    profile_revision: ProfileRevision | None = None
     usage: UsageMetrics
     latency_ms: float = Field(ge=0, allow_inf_nan=False)
+
+
+    @model_validator(mode="after")
+    def profile_identity_is_complete(self):
+        if (self.profile_id is None) != (self.profile_revision is None):
+            raise ValueError("Profile ID and revision must be supplied together")
+        return self
 
 
 class ProviderSettingsResponse(Schema):
@@ -104,6 +130,7 @@ class NewsSentimentBatch(Schema):
 
 
 class NewsAnalysisRequest(Schema):
+    profile: ProfileId | None = None
     include_ai_metadata: bool = False
     articles: list[Article] = Field(min_length=1, max_length=50)
 
@@ -133,6 +160,7 @@ class StockNewsArticle(Schema):
 
 
 class StockNewsSummaryRequest(Schema):
+    profile: ProfileId | None = None
     include_ai_metadata: bool = False
     symbol_code: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=200)

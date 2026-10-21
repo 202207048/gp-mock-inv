@@ -408,5 +408,46 @@ class MetadataRouteTests(unittest.TestCase):
         self.assertFalse(ai._summary_cache)
 
 
+class ProfileMetadataTests(unittest.IsolatedAsyncioTestCase):
+    async def test_accepts_profile_identity_without_changing_external_brief(self):
+        trace = uuid4()
+        metadata = {"trace_id": str(trace), "operation_id": str(uuid4()),
+                    "provider": "openai", "model": "test-model", "usage": {}, "latency_ms": 1,
+                    "profile_id": "sol", "profile_revision": 1}
+        response = httpx.Response(200, json={**WIRE, "ai": metadata},
+                                  request=httpx.Request("POST", "http://unit-test"))
+        with patch.object(httpx.AsyncClient, "post", AsyncMock(return_value=response)):
+            result = await service.summarize_stock_news("http://unit-test", {}, trace_id=trace)
+        self.assertEqual((result.ai.profile_id, result.ai.profile_revision), ("sol", 1))
+        self.assertEqual(result.brief(), BRIEF)
+
+    async def test_invalid_profile_identity_is_not_ignored_as_diagnostics(self):
+        trace = uuid4()
+        base = {"trace_id": str(trace), "operation_id": str(uuid4()), "provider": "openai",
+                "model": "test-model", "usage": {}, "latency_ms": None}
+        for fields in [{"profile_id": "sol"}, {"profile_revision": 1},
+                       {"profile_id": "Sol", "profile_revision": 1},
+                       {"profile_id": " sol ", "profile_revision": 1},
+                       {"profile_id": "sol", "profile_revision": True},
+                       {"profile_id": "sol", "profile_revision": 0}]:
+            response = httpx.Response(200, json={**WIRE, "ai": {**base, **fields}},
+                                      request=httpx.Request("POST", "http://unit-test"))
+            with self.subTest(fields=fields), patch.object(httpx.AsyncClient, "post", AsyncMock(return_value=response)):
+                with self.assertRaises(service.NewsSummaryUnavailable):
+                    await service.summarize_stock_news("http://unit-test", {}, trace_id=trace)
+
+    async def test_valid_profile_does_not_make_optional_numeric_diagnostics_required(self):
+        trace = uuid4()
+        metadata = {"trace_id": str(trace), "operation_id": str(uuid4()), "provider": "openai",
+                    "model": "test-model", "profile_id": "luna", "profile_revision": 1,
+                    "usage": {"input_tokens": True}, "latency_ms": None}
+        response = httpx.Response(200, json={**WIRE, "ai": metadata},
+                                  request=httpx.Request("POST", "http://unit-test"))
+        with patch.object(httpx.AsyncClient, "post", AsyncMock(return_value=response)):
+            result = await service.summarize_stock_news("http://unit-test", {}, trace_id=trace)
+        self.assertIsNone(result.ai)
+        self.assertEqual(result.brief(), BRIEF)
+
+
 if __name__ == "__main__":
     unittest.main()

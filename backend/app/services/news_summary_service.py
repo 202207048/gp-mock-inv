@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
 
 NEWS_DISCLAIMER = "모의투자 연습용 설명이며 투자 권유가 아닙니다."
@@ -29,18 +29,24 @@ class UsageMetrics(BaseModel):
     cached_tokens: TokenCount | None = None
 
 
-class AIExecutionMetadata(ProviderSettings):
-    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
-    trace_id: UUID
-    operation_id: UUID
-    usage: UsageMetrics
-    latency_ms: float = Field(ge=0, allow_inf_nan=False)
-
-
 class _ExecutionIdentity(ProviderSettings):
     """Validate execution integrity even when numeric diagnostics are unusable."""
     trace_id: UUID
     operation_id: UUID
+    profile_id: Annotated[str, StringConstraints(strict=True, strip_whitespace=False, pattern=r"^[a-z][a-z0-9_-]{0,31}$")] | None = None
+    profile_revision: Annotated[int, Field(strict=True, ge=1)] | None = None
+
+    @model_validator(mode="after")
+    def profile_identity_is_complete(self):
+        if (self.profile_id is None) != (self.profile_revision is None):
+            raise ValueError("Profile ID and revision must be supplied together")
+        return self
+
+
+class AIExecutionMetadata(_ExecutionIdentity):
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+    usage: UsageMetrics
+    latency_ms: float = Field(ge=0, allow_inf_nan=False)
 
 
 class StockNewsSummary(ProviderSettings):
