@@ -38,7 +38,12 @@ from app.services.news_summary_service import (
 from app.services.kis_service import get_current_price
 from app.services.news_service import get_news_by_symbol
 from app.utils.deps import get_current_user
-from app.schemas.portfolio_brief import PortfolioBriefFacts
+from app.schemas.portfolio_brief import (
+    PortfolioBriefFacts, PortfolioBriefResponse, PortfolioProfile,
+)
+from app.services.portfolio_brief_client import (
+    PortfolioBriefUnavailable, request_portfolio_brief,
+)
 from app.services.portfolio_brief_service import (
     PortfolioFactsSnapshot, build_portfolio_facts, load_portfolio_facts,
 )
@@ -513,3 +518,30 @@ async def portfolio_brief_facts(
     snapshot: PortfolioFactsSnapshot = Depends(get_portfolio_facts_snapshot),
 ) -> PortfolioBriefFacts:
     return await build_portfolio_facts(snapshot)
+
+
+@router.get("/portfolio-brief/{symbol_code}", response_model=PortfolioBriefResponse,
+            summary="현재 보유종목 AI 브리핑")
+async def portfolio_brief(
+    request: Request,
+    response: Response,
+    profile: PortfolioProfile = Query("luna", description="요청별 모델 프로필: luna 또는 sol"),
+    snapshot: PortfolioFactsSnapshot = Depends(get_portfolio_facts_snapshot),
+) -> PortfolioBriefResponse:
+    # Authorization and holding validation have already completed in the dependency.
+    trace_id = uuid4()
+    response.headers["X-Trace-ID"] = str(trace_id)
+    request.state.trace_id = trace_id
+    request.state.ai_execution = None
+    facts = await build_portfolio_facts(snapshot)
+    try:
+        result = await request_portfolio_brief(
+            settings.AI_SERVER_URL, facts, profile=profile, trace_id=trace_id,
+        )
+    except PortfolioBriefUnavailable as exc:
+        raise HTTPException(exc.status_code, detail=str(exc),
+                            headers={"X-Trace-ID": str(trace_id)}) from None
+    request.state.ai_execution = result.ai
+    return PortfolioBriefResponse(
+        symbol_code=facts.symbol_code, security_name=facts.security_name, **result.brief(),
+    )

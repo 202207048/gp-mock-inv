@@ -134,3 +134,13 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - **프론트팀**: `http://localhost:8000/docs` 에서 API 명세 확인 가능
 - **DB팀**: 스키마 변경 시 `alembic revision --autogenerate -m "변경내용"` 후 공유
 - **AI팀**: `.env`의 `AI_SERVER_URL`에 AI 서버 주소 입력
+
+
+## 보유종목 AI 브리핑
+
+- `GET /api/ai/portfolio-brief/{symbol_code}?account_id={id}&profile=luna`: 로그인 및 본인 계좌/보유종목 확인 후 Fact Bundle → AI Server `POST /brief/portfolio` → 구조화 브리핑을 반환합니다. `profile`은 `luna`(기본값) 또는 `sol`이며 전역 provider를 변경하지 않습니다.
+- 기존 `GET /api/ai/portfolio-brief/facts/{symbol_code}`는 그대로 유지합니다. AI 입력에는 계좌/사용자 정보와 Backend 전용 `price_context`를 보내지 않으며 Decimal은 십진수 문자열로 보존합니다. 현재 AI 계약에서 필요한 주문 ID만 유지합니다.
+- 외부 응답은 `symbol_code`, `security_name`, `headline`, `current_status`, `position_summary`, `recent_issues`, `positive_factors`, `risk_factors`, `watch_points`, `limitations`, 고정 `disclaimer`입니다. 내부 provider/model/usage는 공개하지 않으며 `X-Trace-ID`로 요청을 연결합니다.
+- AI Server는 `AI_SERVER_URL`로 지정하고 요청 제한시간은 30초입니다. 자동 retry, 모델 fallback, 생성 결과 캐시는 없습니다. 잘못된 profile은 422, upstream timeout/오류/잘못된 응답은 502, 설정/연결 불가 또는 upstream 503은 503으로 안전한 안내만 반환합니다. Backend 입력 검증 실패는 422를 유지하고, AI Server의 내부 계약 거부(HTTP 422)는 안전한 502로 변환합니다. provider 인증 오류를 사용자 로그인 401로 전달하지 않습니다.
+- 내부 요청은 `include_ai_metadata=true`를 사용하며 응답의 실행 identity를 필수로 검증합니다. 본문·trace·provider/model/profile identity를 검증하고, 숫자 diagnostics만 잘못되면 정상 본문을 유지한 채 diagnostics를 버립니다.
+- 과거 뉴스/가격 timeline은 미지원입니다. Public AI Server 배포와 service-token 인증은 별도 선행조건이며, 보호되지 않은 AI Server를 외부에 노출하지 않습니다. PostgreSQL migration 적용과 실제 Backend/Frontend E2E도 별도 확인해야 합니다.

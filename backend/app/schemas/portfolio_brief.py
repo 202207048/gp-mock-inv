@@ -1,7 +1,7 @@
 """보유종목 브리핑에 사용할 객관적 사실 계약."""
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -86,3 +86,28 @@ class PortfolioBriefFacts(FactSchema):
     recent_news: list[RecentNews]
     price_context: PriceContext
     limitations: list[FactLimitation]
+
+
+# AI 생성 결과는 사실 데이터 계약과 분리한다. 계좌/실행 진단은 공개하지 않는다.
+PortfolioProfile = Literal["luna", "sol"]
+PORTFOLIO_DISCLAIMER = "모의투자 연습용 설명이며 투자 권유가 아닙니다."
+BriefText = Annotated[str, Field(strict=True, min_length=1, max_length=2000)]
+
+
+class PortfolioBriefBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    headline: str = Field(strict=True, min_length=1, max_length=1000)
+    current_status: list[BriefText] = Field(min_length=1, max_length=3)
+    position_summary: list[BriefText] = Field(max_length=3)
+    recent_issues: list[BriefText] = Field(max_length=3)
+    positive_factors: list[BriefText] = Field(max_length=3)
+    risk_factors: list[BriefText] = Field(max_length=3)
+    watch_points: list[BriefText] = Field(max_length=3)
+    limitations: list[BriefText] = Field(max_length=3)
+    disclaimer: Literal["모의투자 연습용 설명이며 투자 권유가 아닙니다."]
+
+
+class PortfolioBriefResponse(PortfolioBriefBody):
+    symbol_code: str
+    security_name: str | None
