@@ -1,6 +1,6 @@
 # 졸업작품 AI 서버 통합 인수인계
 
-이 문서는 현재 구현된 뉴스 투자영향·중요도 분석과 runtime provider 설정을 Backend 및 Frontend에 연결하기 위한 안내입니다. AI Server 기능은 구현되어 있지만 Backend proxy와 Frontend 연결은 아직 구현되지 않았습니다.
+이 문서는 뉴스 투자영향·중요도 분석, 종목 뉴스 종합 요약과 runtime provider 설정의 통합 안내입니다. 기존 Backend 종목 요약은 AI Server를 통해 처리하도록 연결했습니다. sentiment/importance 분석 proxy와 badge 연결, provider 관리용 proxy/UI는 여전히 별도 팀 작업입니다.
 
 ## 구현 완료 기능
 
@@ -11,6 +11,7 @@
 | OpenAI provider | DONE | 기본 모델 `gpt-6-luna`, reasoning effort `none` |
 | Gemini provider | DONE | 기본 모델 `gemini-3.8-flash` |
 | Runtime provider switch | DONE | 현재 프로세스에서 OpenAI/Gemini를 바꾸며 자동 fallback은 하지 않음 |
+| 종목 뉴스 종합 요약 | DONE | 기존 Backend 요약 경로를 AI Server로 연결하고 기존 Frontend 응답 계약 유지 |
 
 Sentiment는 기사 문구의 감정이 아니라 기사에 적힌 기업 또는 시장에 예상되는 투자 영향 방향입니다. POSITIVE는 실질적으로 유리한 영향, NEGATIVE는 실질적으로 불리한 영향, NEUTRAL은 영향이 불명확하거나 균형적이거나 정보가 부족한 경우를 뜻합니다.
 
@@ -75,6 +76,70 @@ Response:
 - HTTP 503: 선택된 analyzer 설정을 사용할 수 없음
 - HTTP 502, `{"detail":"News analysis failed"}`: provider 분석 요청 또는 응답 처리 실패
 - HTTP 502, `{"detail":"News analyzer initialization failed"}`: analyzer 초기화 실패
+
+### POST /summarize/stock-news — Backend 전용 종목 요약
+
+기존 `GET /api/ai/news-summary/{symbol_code}`가 호출하는 내부 API입니다. 최근 기사 최대 5건의 제목·발췌문과 오늘 등락률을 종합합니다. 기사별 요약 `/summarize/news`는 아직 구현하지 않았으며 이 API와 역할이 다릅니다. AI Server는 뉴스 수집이나 URL 방문을 하지 않습니다.
+
+Request 예시:
+
+```json
+{
+  "symbol_code": "005930",
+  "name": "예시 종목",
+  "change_rate": 1.2,
+  "articles": [
+    {
+      "title": "예시 기업 실적 발표",
+      "summary": "기업이 매출 증가를 발표했다는 발췌문입니다.",
+      "source": "예시 언론사",
+      "date": "2026.10.18 09:00"
+    }
+  ]
+}
+```
+
+- 필수: `symbol_code`, `name`, `articles` 1~5건과 각 `title`.
+- 선택: `change_rate`는 유한한 수 또는 null(기본 null), `summary`는 문자열(기본 빈 문자열), `source`/`date`는 문자열 또는 null.
+- 길이 제한: 종목 코드 32자, 종목명 200자, 기사 제목 2,000자, 발췌문 20,000자, 출처·날짜 각 200자.
+- `date`는 수집된 표시 문자열이며 datetime 변환을 요구하지 않습니다. 발췌문을 전체 기사 본문으로 취급하지 않습니다.
+
+Response 예시:
+
+```json
+{
+  "headline": "오늘은 +1.2% 올랐고, 기사에서 같이 보이는 이슈는 실적입니다.",
+  "summary": ["기업이 매출 증가를 발표했습니다.", "기사만으로 오늘 등락의 원인인지는 확인되지 않습니다."],
+  "tags": ["실적"],
+  "disclaimer": "모의투자 연습용 설명이며 투자 권유가 아닙니다.",
+  "provider": "openai",
+  "model": "gpt-6-luna"
+}
+```
+
+`headline`/`disclaimer`는 비어 있지 않은 문자열, `summary`는 1~3개 문자열, `tags`는 0~3개 문자열입니다. 전체 입력에 대한 종합 결과 하나를 반환하므로 기사별 결과 ID 매핑은 없습니다. provider/model은 요청 시작 시 함께 선택한 실제 실행 정보입니다. 외부 provider 응답에는 이 메타데이터 생성을 맡기지 않습니다.
+
+오류: 입력 검증 실패는 422, provider key 미설정은 503, 초기화·생성·출력 검증 실패는 안전한 502 응답입니다. provider 원본 오류나 key를 반환하지 않으며 다른 provider를 자동 호출하지 않습니다. 요약 호출은 OpenAI 재시도 0회, Gemini 전체 시도 1회로 설정하고 SDK 요청 제한시간은 25초입니다.
+
+### 기존 Backend/Frontend 종목 요약 계약
+
+```text
+StockNewsSummary
+  -> GET /api/ai/news-summary/{symbol_code} (Backend 인증 유지)
+  -> GET /settings/provider (캐시 구분용, 외부 AI 호출 없음)
+  -> POST /summarize/stock-news (캐시 miss 시)
+  -> 요청 시점에 선택된 OpenAI 또는 Gemini
+```
+
+- Backend는 종목명·최근 뉴스 최대 5건·등락률을 기존 방식으로 준비하고 `AI_SERVER_URL`을 사용합니다. 설정 기본값은 `http://localhost:8001`입니다.
+- 기존 GET route와 HTTP method, `symbol_code`, `name`, `change_rate`, `headline`, `summary[]`, `tags[]`, `disclaimer` 응답을 유지합니다. 내부 provider/model은 브라우저 응답에서 제외합니다. Frontend 파일 변경은 필요하지 않습니다.
+- 뉴스가 없으면 기존처럼 HTTP 200과 빈 summary/tags, 표시할 뉴스가 없다는 안내를 반환하고 요약 생성은 호출하지 않습니다.
+- 잘못된 AI_SERVER_URL, 연결 실패, timeout, non-2xx, 공백만 있는 문자열을 포함한 잘못된 JSON/schema는 기존처럼 HTTP 200의 일시 사용 불가 안내와 뉴스 제목 최대 3개로 처리합니다. provider 인증 401/403도 사용자 로그인 오류로 전달하지 않습니다. 원본 뉴스 API는 별도로 유지됩니다.
+- Backend 제한시간은 provider 조회 5초, 요약 요청 30초입니다. 자동 재시도하지 않습니다.
+- 180초 메모리 캐시는 종목 코드/provider/model별로 구분합니다. 생성 도중 전환되면 응답의 실제 provider/model로 저장합니다. 실패 결과와 빈 뉴스 목록은 캐시하지 않습니다. 뉴스 수집 실패도 빈 목록으로 반환될 수 있으므로, 빈 결과가 복구를 가리지 않도록 다음 요청에서 다시 확인합니다. 캐시 hit에서도 provider 조회는 수행합니다.
+- 전환 이후 새 요청부터 적용하며, 이미 진행 중인 요청은 선택 당시 provider를 사용합니다. 이미 화면에 표시된 결과는 새 Backend 요청 전까지 자동으로 바뀌지 않습니다.
+- Backend의 기존 Gemini 뉴스 요약 전용 생성·캐시 코드는 제거했습니다. 설문과 코칭은 여전히 Backend에서 Gemini를 직접 사용하므로 해당 설정·라이브러리는 유지합니다.
+- 현재 메모리 기반 전환과 캐시는 AI Server single worker 환경을 전제로 합니다. 내부 endpoint는 인증이 없으므로 외부 직접 노출을 금지합니다.
 
 ### GET /settings/provider
 
@@ -192,11 +257,15 @@ Provider 선택 UI는 일반 사용자 기능으로 공개하기보다 관리/�
 - Provider 선택은 process memory에만 저장됩니다. 서버 재시작 시 `AI_PROVIDER` 환경변수 값으로 초기화됩니다.
 - Multi-worker 배포에서는 worker마다 provider 상태가 달라질 수 있습니다. 현재 졸업작품 및 local demo에서는 single worker 운용을 권장합니다.
 - Provider 오류가 나도 다른 provider를 자동 호출하지 않습니다. Backend와 Frontend는 실패를 처리하고 뉴스 원본을 유지해야 합니다.
-- Provider 변경 API는 key의 존재 여부만 확인하며, 실제 인증 성공이나 provider 사용 가능 여부를 미리 검증하지 않습니다. 실제 분석 요청은 이후 뉴스 분석 시점에 provider에 전달됩니다.
+- Provider 변경 API는 key의 존재 여부만 확인하며, 실제 인증 성공이나 provider 사용 가능 여부를 미리 검증하지 않습니다. 실제 생성 요청은 이후 뉴스 분석 또는 종목 요약 시점에 provider에 전달됩니다.
 
 ## 검증 상태
 
-- Provider 전환 기능 구현 후 AI Server 전체 테스트: **72 passed**
+- 기존 Provider 전환 기능 검증: **72 passed**
+- 종목 뉴스 요약 통합 후 AI Server 전체 회귀: **107 passed**
+- Backend 관련 테스트: **20 passed** (`test_news_summary.py`, `test_news.py`). Backend 전체 테스트를 실행한 결과는 아닙니다.
+- 통합 구현 검증은 fake/mock과 SDK MockTransport를 사용했으며 외부 네트워크를 차단했습니다. 실제 provider API 호출: **0**.
+- 최종 코드 검토에서 공백 응답, 잘못된 AI_SERVER_URL, 빈 뉴스 캐시 경계를 보완했습니다. 실제 DB 연결과 Backend 전체 기동·브라우저 E2E는 개발 DB 환경 확인 대기 상태입니다.
 - 해당 변경의 `git diff --check`: **PASS**
 - Provider 전환 기능의 테스트/구현 과정에서 live provider API 호출: **0**
 - 기존 검증: GPT-6 Luna endpoint smoke test에서 HTTP 200 및 예시 분석 응답을 확인했습니다.
@@ -209,7 +278,10 @@ Provider 선택 UI는 일반 사용자 기능으로 공개하기보다 관리/�
 | --- | --- | --- | --- |
 | AI Server | sentiment 분석 | DONE | 구현 및 테스트 완료 |
 | AI Server | importance 분석 | DONE | 구현 및 테스트 완료 |
-| AI Server | runtime provider switch | DONE | GET/PUT 설정 API 및 process memory 적용 |
+| AI Server | runtime provider switch | DONE | 뉴스 분석과 종목 요약에 적용 |
+| AI Server | 종목 뉴스 종합 요약 | DONE | POST /summarize/stock-news, provider별 adapter 및 출력 검증 |
+| Backend | 기존 종목 요약 연결 | DONE | 기존 인증 GET 계약 유지, AI_SERVER_URL 호출 및 provider별 캐시 |
+| Frontend | 기존 종목 요약 UI | 기존 유지 | StockNewsSummary와 기존 Backend GET 사용 |
 | Backend | 뉴스 분석 proxy | TEAM_REQUEST | 인증, timeout/error 처리, 뉴스 원본 응답 유지, AI_SERVER_URL 연결 |
 | Backend | provider management proxy | OPTIONAL / TEAM_REQUEST | 관리/시연용 전환이 필요할 때만 인증된 proxy 추가 |
 | Frontend | 뉴스 분석 badge 연결 | TEAM_REQUEST | 기존 뉴스 화면에 sentiment/importance 표시 및 비차단 실패 처리 |

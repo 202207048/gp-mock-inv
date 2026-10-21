@@ -11,6 +11,12 @@ from .schemas import (
     ProviderSwitchRequest,
 )
 from .settings import get_ai_provider
+from .schemas import StockNewsSummaryRequest, StockNewsSummaryResponse
+from .summarizers.base import (
+    StockNewsSummarizer, SummarizerError, SummarizerUnavailableError,
+)
+from .summarizers.openai import OpenAIStockNewsSummarizer
+from .summarizers.gemini import GeminiStockNewsSummarizer
 
 
 app = FastAPI(title="News AI Analysis")
@@ -59,3 +65,30 @@ def analyze_news(
         return NewsAnalysisResponse(articles=analyzer.analyze(request.articles))
     except AnalyzerError as exc:
         raise HTTPException(status_code=502, detail="News analysis failed") from exc
+
+
+def get_stock_news_summarizer() -> StockNewsSummarizer:
+    # Capture provider/model together once for this request, including cache metadata.
+    provider, model = app.state.provider_manager.get_settings()
+    try:
+        if provider == "openai":
+            return OpenAIStockNewsSummarizer(model=model)
+        return GeminiStockNewsSummarizer(model=model)
+    except SummarizerUnavailableError as exc:
+        raise HTTPException(503, detail="Stock-news summarizer unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(502, detail="Stock-news summarizer initialization failed") from exc
+
+
+@app.post("/summarize/stock-news", response_model=StockNewsSummaryResponse)
+def summarize_stock_news(
+    request: StockNewsSummaryRequest,
+    summarizer: StockNewsSummarizer = Depends(get_stock_news_summarizer),
+) -> StockNewsSummaryResponse:
+    try:
+        brief = summarizer.summarize(request)
+        return StockNewsSummaryResponse(
+            **brief.model_dump(), provider=summarizer.provider, model=summarizer.model,
+        )
+    except (SummarizerError, ValueError) as exc:
+        raise HTTPException(502, detail="Stock-news summary failed") from exc
