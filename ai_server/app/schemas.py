@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from uuid import UUID
 from typing import Annotated, Literal
@@ -27,7 +28,7 @@ ProfileId = Annotated[str, StringConstraints(
     strict=True, strip_whitespace=False, pattern=r"^[a-z][a-z0-9_-]{0,31}$",
 )]
 ProfileRevision = Annotated[int, Field(strict=True, ge=1)]
-ProfileTask = Literal["news_analysis", "stock_news_summary"]
+ProfileTask = Literal["news_analysis", "stock_news_summary", "portfolio_brief"]
 
 
 class ModelProfileCatalogEntry(Schema):
@@ -178,5 +179,109 @@ class StockNewsBrief(Schema):
 class StockNewsSummaryResponse(StockNewsBrief):
     ai: AIExecutionMetadata | None = None
     # Internal metadata lets Backend cache by the provider actually used.
+    provider: Literal["openai", "gemini"]
+    model: str = Field(min_length=1, max_length=200)
+
+
+# Independent AI contract: Backend projects only these facts, never account/user IDs.
+PortfolioPositionReason = Literal[
+    "legacy_execution_time_unavailable", "ambiguous_execution_order",
+    "invalid_trade_history", "portfolio_quantity_mismatch",
+]
+PortfolioLimitation = Literal[
+    "legacy_execution_time_unavailable", "ambiguous_execution_order",
+    "invalid_trade_history", "portfolio_quantity_mismatch", "opening_trade_ambiguous",
+    "current_price_unavailable", "invalid_average_price", "news_unavailable",
+    "historical_news_unavailable", "historical_price_unavailable", "security_name_unavailable",
+]
+PortfolioMoney = Annotated[Decimal, Field(allow_inf_nan=False)]
+PortfolioPositiveMoney = Annotated[Decimal, Field(gt=0, allow_inf_nan=False)]
+PORTFOLIO_DISCLAIMER = "모의투자 연습용 설명이며 투자 권유가 아닙니다."
+
+
+class PortfolioHolding(Schema):
+    quantity: int = Field(strict=True, gt=0)
+    avg_price: PortfolioMoney
+    current_price: PortfolioPositiveMoney | None = None
+    unrealized_pnl: PortfolioMoney | None = None
+    return_rate: PortfolioMoney | None = None
+
+    @model_validator(mode="after")
+    def derived_values_require_valid_prices(self):
+        if (self.current_price is None or self.avg_price <= 0) and (
+            self.unrealized_pnl is not None or self.return_rate is not None
+        ):
+            raise ValueError("Derived holding values require current price and positive average price")
+        return self
+
+
+class PortfolioPosition(Schema):
+    available: bool
+    reason: PortfolioPositionReason | None = None
+    started_at: datetime | None = None
+    opening_order_id: int | None = Field(default=None, strict=True, gt=0)
+    opening_price: PortfolioPositiveMoney | None = None
+    buy_count: int | None = Field(default=None, strict=True, ge=1)
+    sell_count: int | None = Field(default=None, strict=True, ge=0)
+
+    @model_validator(mode="after")
+    def position_facts_match_availability(self):
+        if self.available:
+            if self.reason is not None or any(v is None for v in
+                                             (self.started_at, self.buy_count, self.sell_count)):
+                raise ValueError("Available position requires timeline facts")
+            if (self.opening_order_id is None) != (self.opening_price is None):
+                raise ValueError("Opening order and price must be supplied together")
+        elif self.reason is None or any(v is not None for v in (
+            self.started_at, self.opening_order_id, self.opening_price, self.buy_count, self.sell_count,
+        )):
+            raise ValueError("Unavailable position must not contain inferred facts")
+        return self
+
+
+class PortfolioTrade(Schema):
+    order_id: int = Field(strict=True, gt=0)
+    order_type: Literal["매수", "매도"]
+    quantity: int = Field(strict=True, gt=0)
+    price: PortfolioPositiveMoney
+    filled_at: datetime
+
+
+class PortfolioRecentNews(StockNewsArticle):
+    url: str | None = Field(default=None, max_length=4000)
+
+
+class PortfolioBriefRequest(Schema):
+    profile: ProfileId | None = None
+    include_ai_metadata: bool = False
+    symbol_code: str = Field(min_length=1, max_length=32)
+    security_name: str | None = Field(default=None, min_length=1, max_length=200)
+    holding: PortfolioHolding
+    position: PortfolioPosition
+    trades: list[PortfolioTrade]
+    recent_news: list[PortfolioRecentNews] = Field(max_length=5)
+    limitations: list[PortfolioLimitation]
+
+    @model_validator(mode="after")
+    def unavailable_position_has_no_trades(self):
+        if not self.position.available and self.trades:
+            raise ValueError("Unavailable position must not contain reconstructed trades")
+        return self
+
+
+class PortfolioBrief(Schema):
+    headline: str = Field(strict=True, min_length=1, max_length=1000)
+    current_status: list[SummaryText] = Field(min_length=1, max_length=3)
+    position_summary: list[SummaryText] = Field(max_length=3)
+    recent_issues: list[SummaryText] = Field(max_length=3)
+    positive_factors: list[SummaryText] = Field(max_length=3)
+    risk_factors: list[SummaryText] = Field(max_length=3)
+    watch_points: list[SummaryText] = Field(max_length=3)
+    limitations: list[SummaryText] = Field(max_length=3)
+    disclaimer: Literal["모의투자 연습용 설명이며 투자 권유가 아닙니다."]
+
+
+class PortfolioBriefResponse(PortfolioBrief):
+    ai: AIExecutionMetadata | None = None
     provider: Literal["openai", "gemini"]
     model: str = Field(min_length=1, max_length=200)

@@ -221,7 +221,7 @@ def test_catalog_safe_projection_and_missing_key_readiness(api, monkeypatch):
         for profile in response.json():
             assert not forbidden.intersection(profile)
             assert profile["enabled"] is configured
-            assert profile["supported_tasks"] == ["news_analysis", "stock_news_summary"]
+            assert profile["supported_tasks"] == ["news_analysis", "stock_news_summary", "portfolio_brief"]
         assert "unit-test-only" not in response.text
         assert "OPENAI_API_KEY" not in response.text
 

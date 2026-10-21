@@ -27,6 +27,10 @@ from .summarizers.base import (
 )
 from .summarizers.openai import OpenAIStockNewsSummarizer
 from .summarizers.gemini import GeminiStockNewsSummarizer
+from .schemas import PortfolioBriefRequest, PortfolioBriefResponse
+from .summarizers.portfolio import PortfolioBriefGenerator
+from .summarizers.portfolio_openai import OpenAIPortfolioBriefGenerator
+from .summarizers.portfolio_gemini import GeminiPortfolioBriefGenerator
 
 
 app = FastAPI(title="News AI Analysis")
@@ -181,3 +185,43 @@ def summarize_stock_news(
         return _execution_failure("Stock-news summary failed", exc, request.include_ai_metadata, context)
     except ValueError as exc:
         raise HTTPException(502, detail="Stock-news summary failed") from exc
+
+
+def resolve_portfolio_profile(request: PortfolioBriefRequest) -> ResolvedProfile | None:
+    return _resolve_profile(request.profile, "portfolio_brief")
+
+
+def get_portfolio_brief_generator(
+    context: Annotated[ResolvedProfile | None, Depends(resolve_portfolio_profile)] = None,
+) -> PortfolioBriefGenerator:
+    try:
+        if context is not None:
+            return create_profile_adapter(context)
+        provider, model = app.state.provider_manager.get_settings()
+        if provider == "openai":
+            return OpenAIPortfolioBriefGenerator(model=model)
+        return GeminiPortfolioBriefGenerator(model=model)
+    except (SummarizerUnavailableError, ProfileUnavailableError) as exc:
+        raise HTTPException(503, detail="Portfolio brief generator unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(502, detail="Portfolio brief generator initialization failed") from exc
+
+
+@app.post("/brief/portfolio", response_model=PortfolioBriefResponse, response_model_exclude_unset=True)
+def generate_portfolio_brief(
+    request: PortfolioBriefRequest,
+    http_request: Request,
+    generator: PortfolioBriefGenerator = Depends(get_portfolio_brief_generator),
+    context: ResolvedProfile | None = Depends(resolve_portfolio_profile),
+) -> PortfolioBriefResponse | JSONResponse:
+    try:
+        outcome = generator.generate_with_metadata(request, trace_id=http_request.state.trace_id)
+        metadata = profile_metadata(outcome.metadata, context)
+        return PortfolioBriefResponse(
+            **outcome.result.model_dump(), provider=metadata.provider, model=metadata.model,
+            **({"ai": metadata} if request.include_ai_metadata else {}),
+        )
+    except SummarizerError as exc:
+        return _execution_failure("Portfolio brief failed", exc, request.include_ai_metadata, context)
+    except ValueError as exc:
+        raise HTTPException(502, detail="Portfolio brief failed") from exc
