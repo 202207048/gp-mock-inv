@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -7,6 +8,15 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 class Schema(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+
+
+class ProviderSettingsResponse(Schema):
+    provider: Literal["openai", "gemini"]
+    model: str
+
+
+class ProviderSwitchRequest(Schema):
+    provider: str
 
 class Article(Schema):
     article_id: str = Field(min_length=1)
