@@ -202,8 +202,9 @@ class FilledAtMigrationTests(unittest.TestCase):
         self.assertIsNone(column.server_default)
         self.assertIn("TIMESTAMP WITH TIME ZONE", str(CreateColumn(column).compile(dialect=postgresql.dialect())))
         scripts = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "alembic"))
-        self.assertEqual(scripts.get_current_head(), "f20261021_order_filled_at")
-        self.assertEqual(scripts.get_revision(scripts.get_current_head()).down_revision, "e20261007_misu")
+        history = {revision.revision for revision in scripts.walk_revisions(base="base", head=scripts.get_current_head())}
+        self.assertIn("f20261021_order_filled_at", history)
+        self.assertEqual(scripts.get_revision("f20261021_order_filled_at").down_revision, "e20261007_misu")
 
     def test_migration_preserves_legacy_nulls_and_can_downgrade(self):
         path = Path(__file__).resolve().parents[1] / "alembic/versions/f20261021_order_filled_at.py"

@@ -1,3 +1,10 @@
+## 통합 배포 migration (2026-10-21)
+
+배포 전/배포 시 `alembic upgrade head`로 `g20261021_ai_community_merge`까지 적용합니다.
+이 head는 `f20261021_order_filled_at`과 `f20261021_community`를 함께 보존하며,
+merge revision 자체는 schema를 변경하지 않습니다. 기존 DB가 어느 branch에 있든 나머지 migration도 적용됩니다.
+실제 개발/운영 DB migration은 이번 통합 작업에서 실행하지 않았습니다.
+
 ## 주문 체결 시각 추가 (2026-10-21)
 
 새 코드 적용 **전에** 기존 Alembic 방식으로 `alembic upgrade head`를 실행하여
