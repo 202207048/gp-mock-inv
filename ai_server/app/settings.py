@@ -32,3 +32,7 @@ def get_ai_provider() -> str:
 
 def get_openai_api_key() -> str | None:
     return os.getenv("OPENAI_API_KEY")
+
+
+def get_ai_service_token() -> str | None:
+    return os.getenv("AI_SERVICE_TOKEN")

@@ -16,7 +16,7 @@ def provider_client(monkeypatch):
         gemini_key_getter=lambda: "unit-test-gemini-key",
     )
     monkeypatch.setattr(app.state, "provider_manager", manager)
-    with TestClient(app) as client:
+    with TestClient(app, headers={"Authorization": "Bearer unit-test-service-token"}) as client:
         yield client
 
 
@@ -85,7 +85,7 @@ def test_missing_target_key_rejects_switch_and_keeps_current_provider(monkeypatc
         gemini_key_getter=lambda: None,
     )
     monkeypatch.setattr(app.state, "provider_manager", manager)
-    with TestClient(app) as client:
+    with TestClient(app, headers={"Authorization": "Bearer unit-test-service-token"}) as client:
         response = client.put("/settings/provider", json={"provider": "GEMINI"})
         assert response.status_code == 503
         assert response.json() == {"detail": "Selected provider is not configured"}

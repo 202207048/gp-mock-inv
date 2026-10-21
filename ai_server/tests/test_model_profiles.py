@@ -39,7 +39,7 @@ def api(monkeypatch):
     monkeypatch.setattr(main.app.state, "provider_manager", manager)
     monkeypatch.setattr(main.app.state, "model_profiles", profiles.ModelProfileRegistry())
     monkeypatch.setattr(profiles.settings, "get_openai_api_key", lambda: "unit-test-only")
-    with TestClient(main.app) as client:
+    with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as client:
         yield client, manager
 
 

@@ -10,6 +10,7 @@ config.py - 환경변수 설정 파일
 """
 
 from pydantic_settings import BaseSettings
+from pydantic import Field, SecretStr
 
 
 class Settings(BaseSettings):
@@ -54,6 +55,7 @@ class Settings(BaseSettings):
 
     # 예전 별도 AI 서버 주소. 설문은 백엔드에서 Gemini를 직접 호출하므로 사용하지 않음.
     AI_SERVER_URL: str = "http://localhost:8001"
+    AI_SERVICE_TOKEN: SecretStr = Field(default=SecretStr(""), repr=False)
 
     # Persistent mock-order monitor. It never sends brokerage orders.
     ENABLE_ORDER_AUTOMATIONS: bool = True

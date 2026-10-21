@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .execution import normalize_trace_id
+from .service_auth import authenticate_service
 
 from .analyzers.base import AnalyzerError, AnalyzerUnavailableError, NewsAnalyzer
 from .analyzers.gemini import GeminiNewsAnalyzer
@@ -41,9 +42,16 @@ app.state.model_profiles = ModelProfileRegistry()
 @app.middleware("http")
 async def trace_request(request: Request, call_next):
     request.state.trace_id = normalize_trace_id(request.headers.get("X-Trace-ID"))
-    response = await call_next(request)
+    response = authenticate_service(request)
+    if response is None:
+        response = await call_next(request)
     response.headers["X-Trace-ID"] = str(request.state.trace_id)
     return response
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 def _execution_failure(

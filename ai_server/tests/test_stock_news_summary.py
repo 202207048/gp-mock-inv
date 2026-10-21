@@ -43,7 +43,7 @@ def client():
     fake = FakeSummarizer()
     main.app.dependency_overrides[main.get_stock_news_summarizer] = lambda: fake
     try:
-        with TestClient(main.app) as client:
+        with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as client:
             yield client, fake
     finally:
         main.app.dependency_overrides.pop(main.get_stock_news_summarizer, None)
@@ -82,7 +82,7 @@ def test_runtime_switch_selects_summary_provider(monkeypatch, provider):
             made.append(fake)
             return fake
         monkeypatch.setattr(main, attr, create)
-    with TestClient(main.app) as api:
+    with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as api:
         assert api.put("/settings/provider", json={"provider": provider}).status_code == 200
         expected = api.get("/settings/provider").json()
         result = api.post("/summarize/stock-news", json=REQUEST)
@@ -99,7 +99,7 @@ def test_provider_metadata_is_request_snapshot(monkeypatch):
             manager.set_provider("gemini")
             return super().summarize(request)
     monkeypatch.setattr(main, "OpenAIStockNewsSummarizer", lambda **kw: SwitchingFake("openai", kw["model"]))
-    with TestClient(main.app) as api:
+    with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as api:
         result = api.post("/summarize/stock-news", json=REQUEST).json()
     assert result["provider"] == "openai"
     assert manager.get_provider() == "gemini"
@@ -116,7 +116,7 @@ def test_safe_errors_without_fallback(monkeypatch, failure, status):
         fake = FakeSummarizer()
         fake.summarize = Mock(side_effect=failure("unit-test-secret-marker"))
         monkeypatch.setattr(main, "OpenAIStockNewsSummarizer", lambda **kw: fake)
-    with TestClient(main.app) as api:
+    with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as api:
         result = api.post("/summarize/stock-news", json=REQUEST)
     assert result.status_code == status
     assert "unit-test-secret-marker" not in result.text
@@ -126,7 +126,7 @@ def test_safe_errors_without_fallback(monkeypatch, failure, status):
 def test_safe_initialization_failure(monkeypatch):
     monkeypatch.setattr(main.app.state, "provider_manager", RuntimeProviderManager("openai"))
     monkeypatch.setattr(main, "OpenAIStockNewsSummarizer", Mock(side_effect=RuntimeError("unit-test-secret-marker")))
-    with TestClient(main.app) as api:
+    with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as api:
         result = api.post("/summarize/stock-news", json=REQUEST)
     assert result.status_code == 502 and "unit-test-secret-marker" not in result.text
 

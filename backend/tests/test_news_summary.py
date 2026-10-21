@@ -32,8 +32,8 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(httpx.AsyncClient, "get", AsyncMock(return_value=settings_response)) as get, patch.object(httpx.AsyncClient, "post", AsyncMock(return_value=summary_response)) as post:
             selected = await service.get_summary_provider("http://unit-test/")
             summary = await service.summarize_stock_news("http://unit-test/", payload)
-        get.assert_awaited_once_with("http://unit-test/settings/provider")
-        post.assert_awaited_once_with("http://unit-test/summarize/stock-news", json=payload)
+        get.assert_awaited_once_with("http://unit-test/settings/provider", headers={"Authorization": "Bearer unit-test-service-token"})
+        post.assert_awaited_once_with("http://unit-test/summarize/stock-news", json=payload, headers={"Authorization": "Bearer unit-test-service-token"})
         self.assertEqual(selected.provider, "openai")
         self.assertEqual(summary.brief(), BRIEF)
 
@@ -65,6 +65,19 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RouteTests(unittest.TestCase):
+    def test_missing_service_token_keeps_http200_title_fallback_without_transport(self):
+        from pydantic import SecretStr
+        self.patches[0].stop()
+        self.patches[1].stop()
+        with patch.object(ai.settings, "AI_SERVICE_TOKEN", SecretStr("")), patch.object(httpx, "AsyncClient") as client:
+            response = self.client.get("/api/ai/news-summary/005930")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["summary"], [ARTICLES[0]["title"]])
+        self.assertEqual(response.json()["headline"], "뉴스 요약을 잠시 사용할 수 없습니다.")
+        self.assertEqual(ai._summary_cache, {})
+        self.assertNotIn("unit-test-service-token", response.text)
+        client.assert_not_called()
+
     def setUp(self):
         ai._summary_cache.clear()
         app = FastAPI()
@@ -235,8 +248,8 @@ class MetadataTransportTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(httpx.AsyncClient, "get", AsyncMock(return_value=settings_response)) as get, patch.object(httpx.AsyncClient, "post", AsyncMock(return_value=summary_response)) as post:
             await service.get_summary_provider("http://unit-test", trace_id=trace)
             result = await service.summarize_stock_news("http://unit-test", {"include_ai_metadata": True}, trace_id=trace)
-        self.assertEqual(get.call_args.kwargs["headers"], {"X-Trace-ID": str(trace)})
-        self.assertEqual(post.call_args.kwargs["headers"], {"X-Trace-ID": str(trace)})
+        self.assertEqual(get.call_args.kwargs["headers"], {"X-Trace-ID": str(trace), "Authorization": "Bearer unit-test-service-token"})
+        self.assertEqual(post.call_args.kwargs["headers"], {"X-Trace-ID": str(trace), "Authorization": "Bearer unit-test-service-token"})
         self.assertEqual(result.ai.trace_id, trace)
         self.assertEqual(result.ai.operation_id, operation)
         self.assertEqual(result.ai.usage.input_tokens, 0)
@@ -447,6 +460,18 @@ class ProfileMetadataTests(unittest.IsolatedAsyncioTestCase):
             result = await service.summarize_stock_news("http://unit-test", {}, trace_id=trace)
         self.assertIsNone(result.ai)
         self.assertEqual(result.brief(), BRIEF)
+
+
+def setUpModule():
+    from pydantic import SecretStr
+    from app.config import settings
+    global _service_token_patch
+    _service_token_patch = patch.object(settings, "AI_SERVICE_TOKEN", SecretStr("unit-test-service-token"))
+    _service_token_patch.start()
+
+
+def tearDownModule():
+    _service_token_patch.stop()
 
 
 if __name__ == "__main__":

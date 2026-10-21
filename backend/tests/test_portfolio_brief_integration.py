@@ -168,6 +168,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         request = self.requests[0]
         self.assertEqual((request.method, str(request.url)), ("POST", "http://ai.test/brief/portfolio"))
         self.assertEqual(request.headers["X-Trace-ID"], str(self.trace))
+        self.assertEqual(request.headers["Authorization"], "Bearer unit-test-service-token")
         self.assertEqual(json.loads(request.content), service.project_portfolio_brief(facts(), "sol"))
         self.assertEqual(request.extensions["timeout"], dict(connect=30.0, read=30.0, write=30.0, pool=30.0))
         self.assertTrue(self.clients[0].is_closed)
@@ -310,6 +311,16 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
 
 
 class EndpointTests(unittest.TestCase):
+    def test_missing_service_token_is_safe_503_without_transport(self):
+        from pydantic import SecretStr
+        self.generator_patch.stop()
+        with patch.object(routes.settings, "AI_SERVICE_TOKEN", SecretStr("")), patch.object(service.httpx, "AsyncClient") as client:
+            response = self.get()
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("unit-test-service-token", response.text)
+        self.assertIsNone(self.observations[-1])
+        client.assert_not_called()
+
     def setUp(self):
         self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
                                     poolclass=StaticPool)
@@ -566,3 +577,15 @@ class EndpointTests(unittest.TestCase):
         self.assertNotIn("historical_price_unavailable",payloads[0]["limitations"])
         self.assertNotIn("account_id",payloads[0])
         self.assertNotIn("user_id",payloads[0])
+
+
+def setUpModule():
+    from pydantic import SecretStr
+    from app.config import settings
+    global _service_token_patch
+    _service_token_patch = patch.object(settings, "AI_SERVICE_TOKEN", SecretStr("unit-test-service-token"))
+    _service_token_patch.start()
+
+
+def tearDownModule():
+    _service_token_patch.stop()

@@ -160,7 +160,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - 외부 응답은 `symbol_code`, `security_name`, `headline`, `current_status`, `position_summary`, `entry_context`, `recent_issues`, `positive_factors`, `risk_factors`, `watch_points`, `limitations`, 고정 `disclaimer`입니다. 내부 provider/model/usage는 공개하지 않으며 `X-Trace-ID`로 요청을 연결합니다.
 - AI Server는 `AI_SERVER_URL`로 지정하고 요청 제한시간은 30초입니다. 자동 retry, 모델 fallback, 생성 결과 캐시는 없습니다. 잘못된 profile은 422, upstream timeout/오류/잘못된 응답은 502, 설정/연결 불가 또는 upstream 503은 503으로 안전한 안내만 반환합니다. Backend 입력 검증 실패는 422를 유지하고, AI Server의 내부 계약 거부(HTTP 422)는 안전한 502로 변환합니다. provider 인증 오류를 사용자 로그인 401로 전달하지 않습니다.
 - 내부 요청은 `include_ai_metadata=true`를 사용하며 응답의 실행 identity를 필수로 검증합니다. 본문·trace·provider/model/profile identity를 검증하고, 숫자 diagnostics만 잘못되면 정상 본문을 유지한 채 diagnostics를 버립니다.
-- 과거 뉴스 timeline은 미지원입니다. 포지션 시작 전 가격 문맥은 아래 범위에서 제공합니다. Public AI Server 배포와 service-token 인증은 별도 선행조건이며, 보호되지 않은 AI Server를 외부에 노출하지 않습니다. PostgreSQL migration 적용과 실제 Backend/Frontend E2E도 별도 확인해야 합니다.
+- AI Server 호출에는 Backend 환경변수 `AI_SERVICE_TOKEN`의 Bearer 인증을 사용합니다. 토큰 누락 시 HTTP를 보내지 않고 뉴스 요약은 안내 fallback, 보유종목 브리핑은 503을 반환합니다. [서비스 인증·배포 안내](../ai_server/docs/service-auth-deployment.md)를 참고하세요.
+- 과거 뉴스 timeline은 미지원입니다. 포지션 시작 전 가격 문맥은 아래 범위에서 제공합니다. service-token 인증은 구현되어 있으며 실제 Public AI Server 배포와 양쪽 토큰 설정·연결 검증은 별도 선행조건입니다. 보호되지 않은 AI Server를 외부에 노출하지 않습니다. PostgreSQL migration 적용과 실제 Backend/Frontend E2E도 별도 확인해야 합니다.
 
 
 ### 포지션 시작 전 가격 문맥

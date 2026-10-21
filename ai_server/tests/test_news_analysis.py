@@ -12,7 +12,7 @@ from app.schemas import Importance, ImportanceLabel, Sentiment
 def client():
     app.dependency_overrides[get_analyzer] = lambda: FakeAnalyzer()
     try:
-        with TestClient(app) as test_client:
+        with TestClient(app, headers={"Authorization": "Bearer unit-test-service-token"}) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
@@ -136,7 +136,7 @@ def test_analyzer_unavailable(monkeypatch):
         RuntimeProviderManager("gemini", gemini_key_getter=lambda: None),
     )
     monkeypatch.setattr(gemini_module, "get_gemini_api_key", lambda: None)
-    with TestClient(app) as client:
+    with TestClient(app, headers={"Authorization": "Bearer unit-test-service-token"}) as client:
         response = client.post("/analyze/news", json={
             "articles": [{"article_id": "a", "title": "Earnings"}],
         })

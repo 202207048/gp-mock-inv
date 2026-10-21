@@ -2,6 +2,12 @@
 
 FastAPI 기반 뉴스 투자영향 분석 서비스입니다. 기사 문체의 감정이 아니라 해당 종목이나 시장에 미치는 방향과 중요도를 분석합니다.
 
+## 서비스 인증
+
+`GET /health`만 인증 없이 `{"status":"ok"}`를 반환합니다. 나머지 경로(`/docs`, `/redoc`, `/openapi.json` 포함)는 `Authorization: Bearer <AI_SERVICE_TOKEN>`이 필요합니다. AI Server와 Backend에 동일한 `AI_SERVICE_TOKEN`을 안전하게 설정해야 합니다. 값이 없으면 보호 경로는 503, 헤더가 없거나 잘못되면 401입니다. Frontend에는 토큰을 전달하지 않습니다.
+
+설정과 endpoint 분류, Render 준비 항목은 [서비스 인증·배포 안내](docs/service-auth-deployment.md)를 따릅니다. 일반 브라우저에서 인증 없이 Swagger를 여는 기존 방식은 사용할 수 없습니다.
+
 ## API
 
 `POST /analyze/news`에 기사 1~50건을 보내면 입력 순서대로 `article_id`, `sentiment` (`label`, `confidence`), `importance` (`score`, `label`)를 반환합니다. 중요도 점수는 0~1이며 label은 서버 기준으로 산출합니다.
@@ -19,7 +25,7 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-`.env`에 사용할 provider의 키를 설정한 다음 실행합니다.
+`.env`에 사용할 provider의 키와 `AI_SERVICE_TOKEN`을 설정한 다음 실행합니다. 실제 값은 commit하거나 출력하지 않습니다. 기존 `.env.example` 사용자 변경은 이 작업에서 수정하지 않았으므로 서비스 토큰 변수는 별도로 설정해야 합니다.
 
 ```powershell
 python -m uvicorn app.main:app --reload --port 8001

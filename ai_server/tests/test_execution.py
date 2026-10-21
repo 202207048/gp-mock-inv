@@ -136,7 +136,7 @@ def test_routes_opt_in_metadata_and_legacy_shape(monkeypatch, provider, task):
     data = {"articles": [a.model_dump(mode="json") for a in ARTICLES]} if task == "analysis" else REQUEST
     main.app.dependency_overrides[dependency] = lambda: measured
     try:
-        with TestClient(main.app) as api:
+        with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as api:
             trace = str(uuid4())
             legacy = api.post(path, json=data)
             result = api.post(path, json={**data, "include_ai_metadata": True}, headers={"X-Trace-ID": trace})
@@ -158,7 +158,7 @@ def test_routes_opt_in_metadata_and_legacy_shape(monkeypatch, provider, task):
 
 @pytest.mark.parametrize("trace", [None, "not-a-uuid", "unit-test-secret-marker", str(UUID(int=0)), "x" * 100])
 def test_missing_invalid_trace_gets_safe_uuid(trace):
-    with TestClient(main.app) as api:
+    with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as api:
         response = api.get("/settings/provider", headers={"X-Trace-ID": trace} if trace else {})
     assert response.status_code == 200
     assert UUID(response.headers["X-Trace-ID"]).version == 4
@@ -174,7 +174,7 @@ def test_route_failure_is_not_success_and_keeps_safe_observation(task, malformed
     data = {"articles": [a.model_dump(mode="json") for a in ARTICLES]} if task == "analysis" else REQUEST
     main.app.dependency_overrides[dependency] = lambda: measured
     try:
-        with TestClient(main.app) as api:
+        with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as api:
             response = api.post(path, json={**data, "include_ai_metadata": True})
         assert response.status_code == 502
         assert response.json()["ai"]["trace_id"] == response.headers["X-Trace-ID"]
@@ -189,7 +189,7 @@ def test_no_generation_operation_on_initialization_or_validation_failure(monkeyp
     factory = Mock(side_effect=main.SummarizerUnavailableError("unit-test-secret-marker"))
     monkeypatch.setattr(main, "OpenAIStockNewsSummarizer", factory)
     monkeypatch.setattr(main.app.state.provider_manager, "get_settings", lambda: ("openai", "test-model"))
-    with TestClient(main.app) as api:
+    with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as api:
         response = api.post("/summarize/stock-news", json={**REQUEST, "include_ai_metadata": True})
     assert response.status_code == 503
     assert "ai" not in response.json() and "unit-test-secret-marker" not in response.text
@@ -201,7 +201,7 @@ def test_request_validation_never_creates_generation_operation(monkeypatch):
     monkeypatch.setattr(execution, "uuid4", operation_factory)
     main.app.dependency_overrides[main.get_stock_news_summarizer] = lambda: measured
     try:
-        with TestClient(main.app) as api:
+        with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as api:
             response = api.post("/summarize/stock-news", json={**REQUEST, "articles": [], "include_ai_metadata": True}, headers={"X-Trace-ID": str(uuid4())})
         assert response.status_code == 422
         call.assert_not_called()

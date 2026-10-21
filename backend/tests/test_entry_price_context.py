@@ -184,6 +184,13 @@ class LoadingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BridgeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from app.config import settings
+        from pydantic import SecretStr
+        patcher = patch.object(settings, "AI_SERVICE_TOKEN", SecretStr("unit-test-service-token"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def bundle(self, available=True):
         bundle=facts()
         if available:

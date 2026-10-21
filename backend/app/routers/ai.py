@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.services.ai_service_auth import AIServiceNotConfigured, service_headers
 from app.database import get_db
 from app.models.account import Account
 from app.models.ai_propensity_advice import AiPropensityAdvice
@@ -247,12 +248,16 @@ async def _call_ai(path: str, payload: dict | None = None) -> dict:
         HTTPException 503: AI 서버가 꺼져있거나 연결 불가
     """
     try:
+        headers = service_headers()
+    except AIServiceNotConfigured:
+        raise HTTPException(503, detail="AI 서비스를 잠시 사용할 수 없습니다.") from None
+    try:
         # timeout=30: AI 처리는 오래 걸릴 수 있으므로 30초 대기
         async with httpx.AsyncClient(timeout=30) as client:
             if payload:
-                resp = await client.post(f"{settings.AI_SERVER_URL}{path}", json=payload)
+                resp = await client.post(f"{settings.AI_SERVER_URL}{path}", json=payload, headers=headers)
             else:
-                resp = await client.get(f"{settings.AI_SERVER_URL}{path}")
+                resp = await client.get(f"{settings.AI_SERVER_URL}{path}", headers=headers)
 
             resp.raise_for_status()
             return resp.json()
@@ -262,9 +267,10 @@ async def _call_ai(path: str, payload: dict | None = None) -> dict:
         raise HTTPException(
             status_code=503,
             detail="AI 서버에 연결할 수 없습니다. AI팀 서버가 실행 중인지 확인하세요.",
-        )
+        ) from None
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail="AI 서버 오류")
+        raise HTTPException(status_code=503 if e.response.status_code == 503 else 502,
+                            detail="AI 서버 오류") from None
 
 
 @router.get("/coach", summary="AI 투자 코칭 (Gemini)")

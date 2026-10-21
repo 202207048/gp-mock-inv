@@ -5,6 +5,8 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
+from app.services.ai_service_auth import AIServiceNotConfigured, service_headers
+
 
 NEWS_DISCLAIMER = "모의투자 연습용 설명이며 투자 권유가 아닙니다."
 Text = Annotated[str, Field(strict=True, min_length=1, max_length=2000)]
@@ -73,10 +75,15 @@ class NewsSummaryUnavailable(Exception):
 async def _request(base_url: str, path: str, payload: dict | None = None,
                    *, trace_id: UUID | None = None) -> dict:
     try:
+        headers = service_headers()
+        if trace_id is not None:
+            headers["X-Trace-ID"] = str(trace_id)
+    except AIServiceNotConfigured:
+        raise NewsSummaryUnavailable("Stock-news summary unavailable") from None
+    try:
         async with httpx.AsyncClient(timeout=5.0 if payload is None else 30.0) as client:
             url = base_url.rstrip("/") + path
-            headers = {"X-Trace-ID": str(trace_id)} if trace_id is not None else {}
-            options = {"headers": headers} if headers else {}
+            options = {"headers": headers}
             if payload is None:
                 response = await client.get(url, **options)
             else:
@@ -85,7 +92,7 @@ async def _request(base_url: str, path: str, payload: dict | None = None,
             return response.json()
     except (httpx.HTTPError, httpx.InvalidURL, ValueError) as exc:
         # Never forward upstream 401 or raw upstream responses to the browser.
-        raise NewsSummaryUnavailable("Stock-news summary unavailable") from exc
+        raise NewsSummaryUnavailable("Stock-news summary unavailable") from None
 
 
 async def get_summary_provider(base_url: str, *, trace_id: UUID | None = None) -> ProviderSettings:

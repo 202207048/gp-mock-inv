@@ -139,7 +139,7 @@ StockNewsSummary
 - 180초 메모리 캐시는 종목 코드/provider/model별로 구분합니다. 생성 도중 전환되면 응답의 실제 provider/model로 저장합니다. 실패 결과와 빈 뉴스 목록은 캐시하지 않습니다. 뉴스 수집 실패도 빈 목록으로 반환될 수 있으므로, 빈 결과가 복구를 가리지 않도록 다음 요청에서 다시 확인합니다. 캐시 hit에서도 provider 조회는 수행합니다.
 - 전환 이후 새 요청부터 적용하며, 이미 진행 중인 요청은 선택 당시 provider를 사용합니다. 이미 화면에 표시된 결과는 새 Backend 요청 전까지 자동으로 바뀌지 않습니다.
 - Backend의 기존 Gemini 뉴스 요약 전용 생성·캐시 코드는 제거했습니다. 설문과 코칭은 여전히 Backend에서 Gemini를 직접 사용하므로 해당 설정·라이브러리는 유지합니다.
-- 현재 메모리 기반 전환과 캐시는 AI Server single worker 환경을 전제로 합니다. 내부 endpoint는 인증이 없으므로 외부 직접 노출을 금지합니다.
+- 현재 메모리 기반 전환과 캐시는 AI Server single worker 환경을 전제로 합니다. 내부 endpoint는 Backend 서비스 토큰으로 보호합니다. 실제 배포 시 HTTPS와 양쪽 토큰 설정이 필요합니다.
 
 ### GET /settings/provider
 
@@ -211,7 +211,7 @@ Provider 변경:
   -> UI가 현재 provider/model과 변경 결과를 표시
 ```
 
-Provider 설정 endpoint는 현재 AI Server에서 인증하지 않습니다. 관리 UI가 필요한 경우에도 Frontend에서 AI Server를 직접 호출하지 말고 Backend를 경유해야 합니다.
+Provider 설정 endpoint는 `AI_SERVICE_TOKEN` Bearer 인증으로 보호합니다. 서비스 토큰 보유자는 provider 변경 권한도 가지므로 Backend 관리용 proxy에는 별도 사용자 권한 검사가 필요합니다. 관리 UI가 필요한 경우에도 Frontend에서 AI Server를 직접 호출하지 말고 Backend를 경유해야 합니다.
 
 ## Backend TEAM_REQUEST — 미구현
 
@@ -244,16 +244,17 @@ Provider 선택 UI는 일반 사용자 기능으로 공개하기보다 관리/�
 - `AI_PROVIDER`: 시작 provider, 기본 `openai`
 - `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_REASONING_EFFORT`
 - `GEMINI_API_KEY`, `GEMINI_MODEL`
+- `AI_SERVICE_TOKEN`: Backend와 AI Server에 동일한 비밀값 설정; 공개/로그/commit 금지
 
 설치, 로컬 env 파일 준비, 서버 실행 명령은 [AI Server README의 설치·실행·테스트 절](../README.md#설치-실행-테스트)을 따릅니다. README 명령은 `ai_server` 디렉터리에서 실행합니다.
 
-별도 `/health` route는 구현되어 있지 않습니다. 서버가 실행된 뒤 `http://localhost:8001/docs`에서 FastAPI 문서 화면에 접근할 수 있는지 확인하고, 인증된 Backend 경로를 통해 뉴스 분석 요청이 정상 처리되는지 확인하세요. `GET /settings/provider`는 상태 확인용으로 사용할 수 있지만 외부 공개 주소에 노출하지 마세요.
+`GET /health`는 인증 없이 안전한 상태만 반환합니다. `/docs`, `/redoc`, `/openapi.json`과 `GET /settings/provider`는 서비스 토큰이 필요합니다. 인증 없는 브라우저 Swagger 접근은 사용할 수 없습니다. [서비스 인증·배포 안내](service-auth-deployment.md)에 따라 Backend 연결을 검증하세요.
 
 ## 운영 및 보안
 
 - API key는 AI Server 실행 환경에만 설정하고 Backend 응답이나 Frontend로 전달하지 않습니다.
 - 실제 `.env` 파일과 credential을 Git에 commit하지 않습니다. 예시 파일에는 빈 key 값만 둡니다.
-- `GET/PUT /settings/provider`는 현재 인증이 없습니다. 인터넷이나 외부 사용자 네트워크에 직접 노출하지 말고, 신뢰된 내부 경로에서만 접근하도록 방화벽 또는 배포 네트워크로 제한합니다.
+- `GET/PUT /settings/provider`와 `/profiles`는 서비스 토큰으로 보호합니다. HTTPS를 사용하고 토큰은 Backend/AI Server에만 설정합니다. Frontend로 전달하거나 사용자 로그인 토큰을 서비스 토큰으로 대신 사용하지 않습니다.
 - Provider 선택은 process memory에만 저장됩니다. 서버 재시작 시 `AI_PROVIDER` 환경변수 값으로 초기화됩니다.
 - Multi-worker 배포에서는 worker마다 provider 상태가 달라질 수 있습니다. 현재 졸업작품 및 local demo에서는 single worker 운용을 권장합니다.
 - Provider 오류가 나도 다른 provider를 자동 호출하지 않습니다. Backend와 Frontend는 실패를 처리하고 뉴스 원본을 유지해야 합니다.

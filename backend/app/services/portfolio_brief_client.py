@@ -4,6 +4,8 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
+from app.services.ai_service_auth import AIServiceNotConfigured, service_headers
+
 from app.schemas.portfolio_brief import (
     PortfolioBriefBody, PortfolioBriefFacts, PortfolioProfile,
 )
@@ -96,6 +98,11 @@ def _parse_result(data: object, facts: PortfolioBriefFacts, profile: PortfolioPr
 async def request_portfolio_brief(base_url: str, facts: PortfolioBriefFacts, *,
                                   profile: PortfolioProfile = "luna",
                                   trace_id: UUID) -> PortfolioBriefResult:
+    try:
+        headers = service_headers()
+    except AIServiceNotConfigured:
+        raise PortfolioBriefUnavailable(503) from None
+    headers["X-Trace-ID"] = str(trace_id)
     payload = project_portfolio_brief(facts, profile)
     if not isinstance(base_url, str) or not base_url.strip():
         raise PortfolioBriefUnavailable(503)
@@ -110,7 +117,7 @@ async def request_portfolio_brief(base_url: str, facts: PortfolioBriefFacts, *,
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 base_url.strip().rstrip("/") + "/brief/portfolio", json=payload,
-                headers={"X-Trace-ID": str(trace_id)},
+                headers=headers,
             )
             response.raise_for_status()
             data = response.json()
