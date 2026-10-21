@@ -140,7 +140,19 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - `GET /api/ai/portfolio-brief/{symbol_code}?account_id={id}&profile=luna`: 로그인 및 본인 계좌/보유종목 확인 후 Fact Bundle → AI Server `POST /brief/portfolio` → 구조화 브리핑을 반환합니다. `profile`은 `luna`(기본값) 또는 `sol`이며 전역 provider를 변경하지 않습니다.
 - 기존 `GET /api/ai/portfolio-brief/facts/{symbol_code}`는 그대로 유지합니다. AI 입력에는 계좌/사용자 정보와 Backend 전용 `price_context`를 보내지 않으며 Decimal은 십진수 문자열로 보존합니다. 현재 AI 계약에서 필요한 주문 ID만 유지합니다.
-- 외부 응답은 `symbol_code`, `security_name`, `headline`, `current_status`, `position_summary`, `recent_issues`, `positive_factors`, `risk_factors`, `watch_points`, `limitations`, 고정 `disclaimer`입니다. 내부 provider/model/usage는 공개하지 않으며 `X-Trace-ID`로 요청을 연결합니다.
+- 외부 응답은 `symbol_code`, `security_name`, `headline`, `current_status`, `position_summary`, `entry_context`, `recent_issues`, `positive_factors`, `risk_factors`, `watch_points`, `limitations`, 고정 `disclaimer`입니다. 내부 provider/model/usage는 공개하지 않으며 `X-Trace-ID`로 요청을 연결합니다.
 - AI Server는 `AI_SERVER_URL`로 지정하고 요청 제한시간은 30초입니다. 자동 retry, 모델 fallback, 생성 결과 캐시는 없습니다. 잘못된 profile은 422, upstream timeout/오류/잘못된 응답은 502, 설정/연결 불가 또는 upstream 503은 503으로 안전한 안내만 반환합니다. Backend 입력 검증 실패는 422를 유지하고, AI Server의 내부 계약 거부(HTTP 422)는 안전한 502로 변환합니다. provider 인증 오류를 사용자 로그인 401로 전달하지 않습니다.
 - 내부 요청은 `include_ai_metadata=true`를 사용하며 응답의 실행 identity를 필수로 검증합니다. 본문·trace·provider/model/profile identity를 검증하고, 숫자 diagnostics만 잘못되면 정상 본문을 유지한 채 diagnostics를 버립니다.
-- 과거 뉴스/가격 timeline은 미지원입니다. Public AI Server 배포와 service-token 인증은 별도 선행조건이며, 보호되지 않은 AI Server를 외부에 노출하지 않습니다. PostgreSQL migration 적용과 실제 Backend/Frontend E2E도 별도 확인해야 합니다.
+- 과거 뉴스 timeline은 미지원입니다. 포지션 시작 전 가격 문맥은 아래 범위에서 제공합니다. Public AI Server 배포와 service-token 인증은 별도 선행조건이며, 보호되지 않은 AI Server를 외부에 노출하지 않습니다. PostgreSQL migration 적용과 실제 Backend/Frontend E2E도 별도 확인해야 합니다.
+
+
+### 포지션 시작 전 가격 문맥
+
+Fact Bundle의 `entry_price_context`는 기존 KIS 일봉 차트(`range=Y`, 최근 12개월)의 날짜별 OHLC를 사용합니다. KST 기준 현재 `position.started_at`의 **날짜보다 이른** 확정 일봉만 사용하며 시작 당일 종가와 이후 가격은 제외합니다. 주말/휴장일을 달력으로 보충하지 않고 실제 제공된 거래 세션으로 계산합니다.
+
+- `prior_close`: 시작일 직전 마지막 일봉 종가. 5/20세션 수익률은 각각 6/21개의 종가가 있어야 계산합니다: `(직전 종가 / N세션 전 종가 - 1) × 100`.
+- `high_20_sessions`/`low_20_sessions`: 최근 최대 20개 완료 세션의 고저가. 최소 1개면 제공하며 실제 개수 `range_sessions`를 함께 보냅니다. 부족한 수익률은 null, 일부 기간만 있으면 `entry_price_history_partial`입니다.
+- `opening_vs_prior_close_pct`: 정확한 최초 체결가격이 있을 때만 계산합니다. 모호한 opening 가격을 평균으로 대체하지 않습니다.
+- 포지션 불명 또는 조회 실패/범위 밖/잘못된 일봉은 `available=false`이며 다른 보유 사실을 유지합니다. 기존 `price_context`의 과거 시장가격 필드를 체결가격으로 채우지 않습니다.
+
+AI의 `entry_context`는 이 숫자만 설명합니다. 최신 뉴스와 과거 진입 시점을 연결하거나 사용자 매수 이유/실력/좋고 나쁜 매수를 추정하지 않습니다. Frontend와 실제 시장 데이터/E2E 검증은 별도 단계입니다.

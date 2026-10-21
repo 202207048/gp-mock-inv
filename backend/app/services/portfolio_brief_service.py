@@ -15,6 +15,7 @@ from app.models.security import ItemMaster
 from app.schemas.portfolio_brief import (
     HoldingFacts, PortfolioBriefFacts, PriceContext, RecentNews,
 )
+from app.services.entry_price_context import load_entry_price_context
 from app.services.kis_service import get_current_price
 from app.services.news_service import get_news_by_symbol
 from app.services.position_replay import PositionReplayResult, replay_current_position
@@ -104,9 +105,15 @@ async def _recent_news(symbol_code: str) -> list[RecentNews]:
 
 
 async def build_portfolio_facts(snapshot: PortfolioFactsSnapshot) -> PortfolioBriefFacts:
-    price, news = await asyncio.gather(_current_price(snapshot.symbol_code),
-                                       _recent_news(snapshot.symbol_code))
-    limitations = ["historical_news_unavailable", "historical_price_unavailable"]
+    price, news, entry = await asyncio.gather(
+        _current_price(snapshot.symbol_code), _recent_news(snapshot.symbol_code),
+        load_entry_price_context(snapshot.symbol_code, snapshot.replay.position),
+    )
+    limitations = ["historical_news_unavailable"]
+    if not entry.available:
+        limitations.append("historical_price_unavailable")
+    elif entry.return_20_sessions is None:
+        limitations.append("entry_price_history_partial")
     if not snapshot.replay.position.available:
         limitations.append(snapshot.replay.position.reason)
     elif snapshot.replay.position.opening_order_id is None:
@@ -130,6 +137,6 @@ async def build_portfolio_facts(snapshot: PortfolioFactsSnapshot) -> PortfolioBr
         holding=HoldingFacts(quantity=snapshot.quantity, avg_price=snapshot.avg_price,
                              current_price=price, unrealized_pnl=pnl, return_rate=rate),
         position=snapshot.replay.position, trades=list(snapshot.replay.trades),
-        recent_news=news, price_context=PriceContext(current_price=price),
+        recent_news=news, price_context=PriceContext(current_price=price), entry_price_context=entry,
         limitations=limitations,
     )

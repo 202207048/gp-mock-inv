@@ -47,6 +47,7 @@ REQUEST = {
     "limitations": ["historical_news_unavailable", "historical_price_unavailable"],
 }
 BRIEF = {
+    "entry_context": [],
     "headline": "평균단가 대비 수익 구간이며 최근 공급계약과 비용 증가가 확인됩니다.",
     "current_status": ["현재 10주 보유, 평균단가는 70,000원입니다."],
     "position_summary": ["현재 포지션은 2026-10-20에 시작됐으며 매수 1건, 매도 1건입니다."],
@@ -636,3 +637,67 @@ def test_endpoint_optional_fact_absence_accepts_grounded_structured_output(api, 
         main.app.dependency_overrides.pop(main.get_portfolio_brief_generator)
     assert response.status_code == 200 and response.json() == {**brief, "provider": "openai", "model": "unit-test-model"}
     call.assert_called_once()
+
+
+ENTRY = {
+    "available": True, "anchor_at": REQUEST["position"]["started_at"], "opening_price": "70000",
+    "prior_close_date": "2026-10-19", "prior_close": "69800", "return_5_sessions": "4.2",
+    "return_20_sessions": "-1.8", "high_20_sessions": "72000", "low_20_sessions": "65000",
+    "range_sessions": 20, "opening_vs_prior_close_pct": "0.2865329512893982808022923",
+}
+
+
+def test_entry_context_request_output_and_safe_prompt_are_separate_from_recent_news():
+    request=PortfolioBriefRequest(**body(entry_price_context=deepcopy(ENTRY)))
+    assert request.entry_price_context.prior_close == Decimal("69800")
+    rules, raw = build_portfolio_brief_prompt(request).split("\n\n",1)
+    assert json.loads(raw)["entry_price_context"]["prior_close"] == "69800"
+    for phrase in ("시작 이전에 확정된 일봉", "사용자 매수 이유가 아닙니다", "시작 당일 종가나 미래 가격",
+                   "range_sessions", "null 수익률", "좋은/나쁜 매수 타이밍", "현재 최신 뉴스만", "인과관계를 만들지"):
+        assert phrase in rules
+    assert PortfolioBrief(**(BRIEF | {"entry_context":["직전 5세션 수익률은 4.2%입니다."]})).entry_context
+
+
+@pytest.mark.parametrize("change", [
+    {"prior_close_date":"2026-10-20"}, {"prior_close_date":"2026-10-21"},
+    {"prior_close":"NaN"}, {"return_5_sessions":"Infinity"}, {"range_sessions":0},
+    {"range_sessions":21}, {"range_sessions":5}, {"range_sessions":19}, {"low_20_sessions":"999999"},
+    {"anchor_at":"2026-10-20T01:00:00"}, {"anchor_at":"2026-10-21T01:00:00Z"},
+    {"opening_price":"71000"}, {"extra":"private"},
+])
+def test_invalid_or_future_entry_context_is_rejected(change):
+    with pytest.raises(ValidationError):
+        PortfolioBriefRequest(**body(entry_price_context=ENTRY | change))
+
+
+@pytest.mark.parametrize("value", ["wrong",["x"]*4,[" "],[123],None])
+def test_entry_output_is_strict_and_bounded(value):
+    with pytest.raises(ValidationError):
+        PortfolioBrief(**(BRIEF | {"entry_context":value}))
+
+
+@pytest.mark.parametrize("cls", ADAPTERS)
+@pytest.mark.parametrize("context", [None, {"available":False,"reason":"historical_price_unavailable"}])
+def test_unavailable_entry_cannot_be_generated_by_either_provider(cls, context):
+    generator,call=fake_adapter(cls,brief=BRIEF | {"entry_context":["invented-entry"]})
+    with pytest.raises(SummarizerError):
+        generator.generate(PortfolioBriefRequest(**body(entry_price_context=context)))
+    call.assert_called_once()
+
+
+@pytest.mark.parametrize("profile", ["luna","sol"])
+def test_entry_context_profile_endpoint_keeps_model_and_metadata(api,monkeypatch,profile):
+    actual=OpenAIPortfolioBriefGenerator
+    calls=[]
+    def factory(**config):
+        adapter,call=fake_adapter(actual,model=config["model"],effort=config["reasoning_effort"],
+                                  brief=BRIEF | {"entry_context":["직전 5세션 수익률은 4.2%입니다."]})
+        calls.append(call)
+        return adapter
+    monkeypatch.setattr(profiles,"OpenAIPortfolioBriefGenerator",factory)
+    response=api[0].post(PATH,json=body(profile=profile,include_ai_metadata=True,entry_price_context=ENTRY))
+    assert response.status_code == 200
+    assert response.json()["entry_context"] == ["직전 5세션 수익률은 4.2%입니다."]
+    assert response.json()["ai"]["profile_id"] == profile
+    assert response.json()["model"] == MODELS[profile][0]
+    assert len(calls)==1 and calls[0].call_count==1

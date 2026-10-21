@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from uuid import UUID
@@ -191,7 +191,7 @@ PortfolioPositionReason = Literal[
 PortfolioLimitation = Literal[
     "legacy_execution_time_unavailable", "ambiguous_execution_order",
     "invalid_trade_history", "portfolio_quantity_mismatch", "opening_trade_ambiguous",
-    "current_price_unavailable", "invalid_average_price", "news_unavailable",
+    "current_price_unavailable", "invalid_average_price", "news_unavailable", "entry_price_history_partial",
     "historical_news_unavailable", "historical_price_unavailable", "security_name_unavailable",
 ]
 PortfolioMoney = Annotated[Decimal, Field(allow_inf_nan=False)]
@@ -251,6 +251,50 @@ class PortfolioRecentNews(StockNewsArticle):
     url: str | None = Field(default=None, max_length=4000)
 
 
+class PortfolioEntryPriceContext(Schema):
+    available: bool
+    reason: Literal["position_unavailable", "historical_price_unavailable"] | None = None
+    anchor_at: datetime | None = None
+    opening_price: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    prior_close_date: date | None = None
+    prior_close: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    return_5_sessions: Decimal | None = Field(default=None, allow_inf_nan=False)
+    return_20_sessions: Decimal | None = Field(default=None, allow_inf_nan=False)
+    high_20_sessions: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    low_20_sessions: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    range_sessions: int = Field(default=0, strict=True, ge=0, le=20)
+    opening_vs_prior_close_pct: Decimal | None = Field(default=None, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_entry_context(self):
+        prices = (self.prior_close, self.high_20_sessions, self.low_20_sessions)
+        if self.available:
+            if (self.reason is not None or self.anchor_at is None
+                    or self.anchor_at.utcoffset() is None or self.prior_close_date is None
+                    or any(v is None for v in prices) or self.range_sessions == 0):
+                raise ValueError("Available entry context requires completed session facts")
+            anchor_day = self.anchor_at.astimezone(timezone(timedelta(hours=9))).date()
+            if self.prior_close_date >= anchor_day:
+                raise ValueError("Entry context must exclude the start day and all future bars")
+            if not self.low_20_sessions <= self.prior_close <= self.high_20_sessions:
+                raise ValueError("Invalid historical range")
+        elif (self.reason is None or any(v is not None for v in (
+            *prices, self.prior_close_date, self.return_5_sessions, self.return_20_sessions,
+            self.opening_vs_prior_close_pct,
+        )) or self.range_sessions != 0):
+            raise ValueError("Unavailable entry context must not contain historical facts")
+        if self.reason == "position_unavailable" and (
+            self.anchor_at is not None or self.opening_price is not None
+        ):
+            raise ValueError("Unknown position cannot supply an entry anchor")
+        if ((self.return_5_sessions is not None and self.range_sessions < 6)
+                or (self.return_20_sessions is not None and self.range_sessions < 20)):
+            raise ValueError("Historical returns require enough completed sessions")
+        if self.opening_price is None and self.opening_vs_prior_close_pct is not None:
+            raise ValueError("Opening comparison requires a known fill price")
+        return self
+
+
 class PortfolioBriefRequest(Schema):
     profile: ProfileId | None = None
     include_ai_metadata: bool = False
@@ -258,6 +302,7 @@ class PortfolioBriefRequest(Schema):
     security_name: str | None = Field(default=None, min_length=1, max_length=200)
     holding: PortfolioHolding
     position: PortfolioPosition
+    entry_price_context: PortfolioEntryPriceContext | None = None
     trades: list[PortfolioTrade]
     recent_news: list[PortfolioRecentNews] = Field(max_length=5)
     limitations: list[PortfolioLimitation]
@@ -266,12 +311,22 @@ class PortfolioBriefRequest(Schema):
     def unavailable_position_has_no_trades(self):
         if not self.position.available and self.trades:
             raise ValueError("Unavailable position must not contain reconstructed trades")
+        context = self.entry_price_context
+        if context is not None:
+            if not self.position.available and (context.available or context.anchor_at is not None
+                                                or context.opening_price is not None):
+                raise ValueError("Unknown position cannot have entry context")
+            if context.anchor_at is not None and context.anchor_at != self.position.started_at:
+                raise ValueError("Entry anchor must match the current position")
+            if context.available and context.opening_price != self.position.opening_price:
+                raise ValueError("Entry opening price must match the known fill")
         return self
 
 
 class PortfolioBrief(Schema):
     headline: str = Field(strict=True, min_length=1, max_length=1000)
     current_status: list[SummaryText] = Field(min_length=1, max_length=3)
+    entry_context: list[SummaryText] = Field(max_length=3)
     position_summary: list[SummaryText] = Field(max_length=3)
     recent_issues: list[SummaryText] = Field(max_length=3)
     positive_factors: list[SummaryText] = Field(max_length=3)

@@ -48,6 +48,11 @@ def project_portfolio_brief(facts: PortfolioBriefFacts, profile: PortfolioProfil
         "recent_news": [news.model_dump(mode="json", include={
             "title", "summary", "source", "date", "url",
         }) for news in facts.recent_news],
+        "entry_price_context": facts.entry_price_context.model_dump(mode="json", include={
+            "available", "reason", "anchor_at", "opening_price", "prior_close_date", "prior_close",
+            "return_5_sessions", "return_20_sessions", "high_20_sessions", "low_20_sessions",
+            "range_sessions", "opening_vs_prior_close_pct",
+        }),
         "limitations": list(facts.limitations),
         "profile": profile,
         "include_ai_metadata": True,
@@ -72,6 +77,8 @@ def _parse_result(data: object, facts: PortfolioBriefFacts, profile: PortfolioPr
         if ((identity.provider, identity.model) != (result.provider, result.model)
                 or identity.trace_id != trace_id or identity.profile_id != profile):
             raise ValueError("Execution identity mismatch")
+        if not facts.entry_price_context.available and result.entry_context:
+            raise ValueError("Unavailable entry context reconstructed")
         if not facts.position.available and result.position_summary:
             raise ValueError("Unavailable position reconstructed")
         if not facts.recent_news and result.recent_issues:

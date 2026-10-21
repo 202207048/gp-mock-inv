@@ -32,7 +32,7 @@ from app.utils.deps import get_current_user
 START = datetime(2026, 10, 21, 1, tzinfo=timezone.utc)
 NEWS = {"title": "가온기술, 신규 공급 계약", "summary": "공급 계약을 공시했다.",
         "source": "가상매체", "date": "2026-10-21", "url": "https://example.invalid/one"}
-BODY = {"headline": "현재 보유 상태와 최근 공급 계약을 확인합니다.",
+BODY = {"entry_context": [], "headline": "현재 보유 상태와 최근 공급 계약을 확인합니다.",
         "current_status": ["10주를 보유하고 있습니다."],
         "position_summary": ["현재 포지션에서 매수 1건이 확인됩니다."],
         "recent_issues": ["신규 공급 계약을 공시했습니다."],
@@ -87,7 +87,7 @@ class ProjectionTests(unittest.TestCase):
         payload = service.project_portfolio_brief(bundle)
         self.assertEqual(set(payload), {"symbol_code", "security_name", "holding", "position",
                                        "trades", "recent_news", "limitations", "profile",
-                                       "include_ai_metadata"})
+                                       "include_ai_metadata", "entry_price_context"})
         self.assertEqual(payload["holding"], bundle.holding.model_dump(mode="json"))
         self.assertEqual(payload["position"], bundle.position.model_dump(mode="json"))
         self.assertEqual(payload["trades"], [t.model_dump(mode="json") for t in bundle.trades])
@@ -100,7 +100,7 @@ class ProjectionTests(unittest.TestCase):
         text = json.dumps(payload, allow_nan=False)
         for field in ("account_id", "user_id", "email", "user_name", "price_context",
                       "position_start_price", "change_since_position_start"):
-            self.assertNotIn(field, text)
+            self.assertNotIn(json.dumps(field) + ":", text)
 
     def test_decimal_values_are_strings_and_never_lossy_floats(self):
         payload = service.project_portfolio_brief(facts(), "sol")
@@ -539,3 +539,30 @@ class EndpointTests(unittest.TestCase):
         for key in ("model", "provider", "reasoning"):
             self.assertNotIn(key, payloads[0])
         self.assertIsNone(self.observations[-1])
+
+
+    def test_entry_price_context_flows_from_facts_through_client_to_public_response(self):
+        from datetime import date
+        from app.schemas.portfolio_brief import EntryPriceContext
+        context=EntryPriceContext(
+            available=True,anchor_at=START,opening_price="100.25",prior_close_date=date(2026,10,20),
+            prior_close="100",high_20_sessions="105",low_20_sessions="95",range_sessions=1,
+            opening_vs_prior_close_pct="0.25",
+        )
+        self.generator_patch.stop()
+        payloads=[]
+        def handle(request):
+            payloads.append(json.loads(request.content))
+            data=wire("sol",UUID(request.headers["X-Trace-ID"]))
+            data["entry_context"]=["포지션 시작 직전 확인된 종가는 100원입니다."]
+            return httpx.Response(200,json=data)
+        def factory(**options):
+            return RealAsyncClient(transport=httpx.MockTransport(handle),**options)
+        with patch.object(service.httpx,"AsyncClient",side_effect=factory),              patch.object(facts_service,"load_entry_price_context",AsyncMock(return_value=context)):
+            response=self.get(query="&profile=sol")
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()["entry_context"],["포지션 시작 직전 확인된 종가는 100원입니다."])
+        self.assertEqual(payloads[0]["entry_price_context"],context.model_dump(mode="json"))
+        self.assertNotIn("historical_price_unavailable",payloads[0]["limitations"])
+        self.assertNotIn("account_id",payloads[0])
+        self.assertNotIn("user_id",payloads[0])
