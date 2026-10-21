@@ -1,3 +1,13 @@
+## 커뮤니티 첨부 기능 (2026-10-21)
+
+백엔드 배포 전에 `alembic upgrade head`로 `f20261021_community`를 적용한 뒤 서버와 프론트엔드를 함께 배포합니다. `posts.attachments`와 `post_votes`가 추가됩니다. 기존 게시글은 보존됩니다. 운영 DB에는 이번 로컬 작업에서 마이그레이션을 실행하지 않았습니다.
+
+게시글 생성은 `images`(최대 4장, JPG/PNG/WEBP data URL, 장당 디코딩 후 1MB), `poll`(`question`, 서로 다른 `options` 2~4개), `symbol_code`, `trade_id`를 받습니다. 프론트엔드는 원본 10MB 이하 사진을 최대 1600px JPEG로 압축합니다. 사진은 게시글 JSON에 저장되므로 프록시 요청 본문 제한을 최소 6MB로 설정해야 합니다. 거래내역은 본인 계좌의 체결 내역만 서버에서 조회해 종목·매매구분·수량·단가·시각을 저장하며 계좌번호와 잔고는 공유하지 않습니다.
+
+`PUT /api/community/posts/{post_id}/vote`에 `option_index`를 보내 투표하거나 선택을 변경합니다. 사용자별 1표이며 게시글 목록/상세에서 집계와 자신의 선택을 반환합니다. 검증: `python -m unittest tests.test_community_attachments tests.test_community_migration tests.test_withdrawal`.
+
+`GET /api/community/capabilities`는 첨부·투표·인용 지원을 반환합니다. 프론트엔드는 첨부 등록 전에 이 API를 확인해 구버전 서버가 알 수 없는 필드를 조용히 버리는 것을 방지합니다. `quote_post_id`를 전달하면 원문 작성자·제목·본문 일부를 서버에서 조회하여 인용으로 저장합니다. `GET /api/community/posts?symbol_code=005930`으로 종목별 카테고리 필터를 적용하며, 프론트엔드의 카테고리 목록은 사용자별로 현재 브라우저에 저장됩니다.
+
 ## 미수 모의거래 추가 (2026-10-07)
 
 새 코드 적용 **전에** `pip install -r requirements.txt`, `alembic upgrade head`로 `e20261007_misu`까지 적용하고 서버를 재시작합니다. 일반 주문·포트폴리오도 미수 장부를 참조하므로 스키마와 서버 코드를 함께 배포해야 합니다. 운영 DB에 이번 로컬 작업으로 마이그레이션을 실행하지 않았습니다.

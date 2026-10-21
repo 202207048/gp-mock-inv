@@ -14,7 +14,7 @@ models/community.py - 커뮤니티 관련 테이블 모델
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -46,6 +46,7 @@ class Post(Base):
 
     # 게시글 내용 (Text: 길이 제한 없이 긴 글 저장 가능)
     content = Column(Text, nullable=False)
+    attachments = Column(JSON, nullable=True)
 
     # 작성일시
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -63,6 +64,7 @@ class Post(Base):
     # cascade="all, delete-orphan": 게시글 삭제 시 댓글/좋아요도 자동 삭제
     comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan")
     likes = relationship("PostLike", back_populates="post", cascade="all, delete-orphan")
+    votes = relationship("PostVote", back_populates="post", cascade="all, delete-orphan")
 
 
 class Comment(Base):
@@ -117,3 +119,13 @@ class PostLike(Base):
     # 관계 설정
     post = relationship("Post", back_populates="likes")
     user = relationship("User")
+
+
+class PostVote(Base):
+    __tablename__ = "post_votes"
+    __table_args__ = (UniqueConstraint("post_id", "user_id", name="uq_post_vote_user"),)
+    vote_id = Column(Integer, primary_key=True)
+    post_id = Column(Integer, ForeignKey("posts.post_id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    option_index = Column(Integer, nullable=False)
+    post = relationship("Post", back_populates="votes")
