@@ -36,6 +36,7 @@ class MisuTests(unittest.TestCase):
         with self.Session() as db:
             order = self.buy(db)
             self.assertEqual(order.funding_type, '미수')
+            self.assertEqual(order.filled_at.replace(tzinfo=timezone.utc), MONDAY)
             self.assertEqual(db.get(Account, 1).withdrawable_cash, 0)
             self.assertEqual(misu.snapshot(db, 1, MONDAY)['debt'], 100000)
             self.assertEqual(db.query(Portfolio).first().hold_quantity, 4)
@@ -45,9 +46,10 @@ class MisuTests(unittest.TestCase):
         with self.Session() as db:
             req = self.request()
             first = self.buy(db, req)
-            again = create_order(db, req, 1, Decimal(51000), now=MONDAY)
+            again = create_order(db, req, 1, Decimal(51000), now=MONDAY + timedelta(minutes=1))
             self.assertEqual(first.order_id, again.order_id)
             self.assertEqual(db.query(Order).count(), 1)
+            self.assertEqual(again.filled_at.replace(tzinfo=timezone.utc), MONDAY)
             with self.assertRaises(HTTPException) as error:
                 create_order(db, req.model_copy(update={'quantity': 3}), 1, Decimal(50000), now=MONDAY)
             self.assertEqual(error.exception.status_code, 409)
@@ -105,6 +107,8 @@ class MisuTests(unittest.TestCase):
             process_account(db, 1, quotes, now); db.commit()
             self.assertEqual(db.query(Portfolio).count(), 0)
             self.assertEqual(db.query(Order).filter_by(funding_type='반대매매').count(), 1)
+            forced = db.query(Order).filter_by(funding_type='반대매매').one()
+            self.assertEqual(forced.filled_at.replace(tzinfo=timezone.utc), now)
             self.assertEqual(db.query(MisuSettlement).first().amount, 79844)
             process_account(db, 1, quotes, now); db.commit()
             self.assertEqual(db.query(Order).count(), 2)

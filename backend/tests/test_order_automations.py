@@ -112,13 +112,15 @@ class AutomationTests(unittest.TestCase):
         job_id = self.job()
         self.assertEqual(self.process(job_id, 50001), 'active')
         self.assertEqual(self.process(job_id, 50000), 'executed')
-        self.assertEqual(self.process(job_id, 49000), 'executed')
+        self.assertEqual(self.process(job_id, 49000, now=self.now + timedelta(minutes=1)), 'executed')
         with self.Session() as db:
             self.assertEqual(db.query(Order).count(), 1)
             self.assertEqual(db.get(Account, 1).withdrawable_cash, 949992)
             order = db.query(Order).one()
             self.assertEqual(order.commission, 8)
             self.assertEqual(order.tax, 0)
+            self.assertEqual(order.filled_at.replace(tzinfo=UTC), self.now)
+            self.assertEqual(order.filled_at, db.get(OrderAutomation, job_id).executed_at)
             self.assertEqual(db.query(Portfolio).one().avg_price, 50000)
 
     def test_sell_gte_deducts_fee_and_tax(self):

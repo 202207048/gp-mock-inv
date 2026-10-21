@@ -109,7 +109,7 @@ def process_one(db, automation_id, quote, now, unavailable_reason=None):
     try:
         # Roll back any partial fill before recording a business rejection.
         with db.begin_nested():
-            order = create_order(db, request, user_id, price, commit=False)
+            order = create_order(db, request, user_id, price, commit=False, now=now)
         job.order_id, job.executed_at = order.order_id, now
         job.status, job.reason = 'executed', '시장가 모의 체결 완료 · 실제 비용은 주문내역에서 확인하세요.'
     except HTTPException as exc:

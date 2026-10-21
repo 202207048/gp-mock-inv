@@ -81,7 +81,6 @@ def create_order(
         user_id: 현재 로그인한 유저의 ID
         fill_price: 서버가 조회한 현재가 (원)
     """
-    now = now or datetime.now(timezone.utc)
     if req.quantity <= 0:
         raise HTTPException(status_code=400, detail="주문 수량은 1주 이상이어야 합니다.")
 
@@ -98,6 +97,8 @@ def create_order(
     if not account:
         raise HTTPException(status_code=404, detail="계좌를 찾을 수 없습니다.")
 
+    # 계좌 잠금 대기 이전의 시각을 새 체결에 기록하지 않는다.
+    now = now or datetime.now(timezone.utc)
     if req.funding_type == '미수' and req.client_request_id:
         previous = db.query(MisuDebt).filter_by(account_id=req.account_id, request_id=str(req.client_request_id)).first()
         if previous:
@@ -175,6 +176,7 @@ def create_order(
         tax=tax,
         status=status,
         funding_type=req.funding_type,
+        filled_at=now if fill_now else None,
     )
     db.add(order)
     db.flush()
@@ -190,7 +192,10 @@ def create_order(
     return order
 
 
-def check_pending_order(db: Session, order_id: int, account_id: int, user_id: int, book: dict) -> Order:
+def check_pending_order(
+    db: Session, order_id: int, account_id: int, user_id: int, book: dict,
+    *, now: datetime | None = None,
+) -> Order:
     """Explicit simulation step, never a mutation on GET. Lock account before order."""
     account = db.query(Account).filter(Account.account_id == account_id, Account.user_id == user_id).with_for_update().populate_existing().first()
     if not account:
@@ -200,7 +205,7 @@ def check_pending_order(db: Session, order_id: int, account_id: int, user_id: in
         raise HTTPException(404, "주문을 찾을 수 없습니다.")
     if order.status != "대기":
         return order
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     misu.settle_account(db, account, now)
     limit = resolve_price("중간가", order.order_type, book) if order.price_type == "중간가" else order.price
     order.price = limit
@@ -222,6 +227,7 @@ def check_pending_order(db: Session, order_id: int, account_id: int, user_id: in
             order.status = "거부"
         else:
             order.price, order.commission, order.tax, order.status = price, commission, tax, "체결"
+            order.filled_at = now
             if order.order_type == "매도":
                 misu.defer_sale(db, account, order, gross - commission - tax, now)
     db.commit()

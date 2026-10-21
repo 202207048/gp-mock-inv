@@ -65,6 +65,9 @@ class Order(Base):
     # 주문 시간 (자동으로 현재 시간 저장)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # 실제 잔고 반영 시각(UTC). 미체결 및 체결 시각을 모르는 과거 주문은 NULL.
+    filled_at = Column(DateTime(timezone=True), nullable=True)
+
     # 관계 설정
     account = relationship("Account", back_populates="orders")
     item_master = relationship("ItemMaster", back_populates="orders")
