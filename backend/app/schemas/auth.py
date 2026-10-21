@@ -12,7 +12,11 @@ Pydantic 스키마(Schema)란?
     Schema (schemas/) → API 요청/응답 형식 정의 (Pydantic)
 """
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
+
+
+class DeleteUserRequest(BaseModel):
+    passwd: str = Field(min_length=1, max_length=256)
 
 
 class RegisterRequest(BaseModel):
