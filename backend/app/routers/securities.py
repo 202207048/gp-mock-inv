@@ -14,6 +14,7 @@ FastAPI는 경로를 위에서부터 순서대로 매칭하므로, 순서가 바
 "ranking"이 symbol_code 값으로 처리된다.
 """
 
+from datetime import datetime, timedelta
 from typing import Literal
 
 import httpx
@@ -36,6 +37,8 @@ from app.routers.stock_logos import router as stock_logos_router
 
 # prefix는 main.py에서 /api/stocks 로 지정
 router = APIRouter(tags=["주식 시세"])
+_PRICE_CACHE_SECONDS = 10
+_price_cache: dict[str, tuple[datetime, dict]] = {}
 router.include_router(stock_logos_router)
 
 
@@ -155,7 +158,8 @@ async def get_price(
     symbol_code: str,
 ):
     """
-    한국투자증권 모의투자 API를 통해 실시간 현재가를 조회합니다.
+    한국투자증권 모의투자 API를 통해 현재가를 조회합니다.
+    성공한 응답은 같은 종목에 한해 10초간 다시 사용합니다.
 
     응답 예시:
         {
@@ -167,7 +171,22 @@ async def get_price(
             "volume": 15000000
         }
     """
-    return await get_current_price(symbol_code)
+    now = datetime.utcnow()
+    cached = _price_cache.get(symbol_code)
+    if cached and now < cached[0]:
+        return cached[1]
+    try:
+        quote = await get_current_price(symbol_code, timeout=10)
+    except (httpx.HTTPError, ValueError, TypeError, KeyError):
+        raise HTTPException(
+            status_code=503,
+            detail="현재가를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        )
+    for code, (expires_at, _) in list(_price_cache.items()):
+        if now >= expires_at:
+            _price_cache.pop(code, None)
+    _price_cache[symbol_code] = (now + timedelta(seconds=_PRICE_CACHE_SECONDS), quote)
+    return quote
 
 
 @router.get("/{symbol_code}/chart", summary="차트 데이터 조회")

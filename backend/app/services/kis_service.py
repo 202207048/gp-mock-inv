@@ -116,7 +116,7 @@ async def get_real_kis_token() -> str:
 
 # ── 현재가 조회 (모의투자 키) ─────────────────────────────────
 
-async def get_current_price(symbol_code: str) -> dict:
+async def get_current_price(symbol_code: str, timeout: float = 5.0) -> dict:
     """
     국내 주식 현재가를 조회한다.
 
@@ -143,7 +143,7 @@ async def get_current_price(symbol_code: str) -> dict:
 
     token = await get_kis_token()
 
-    async with httpx.AsyncClient(verify=False) as client:
+    async with httpx.AsyncClient(verify=False, timeout=timeout) as client:
         resp = await client.get(
             f"{KIS_MOCK_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
             headers={
