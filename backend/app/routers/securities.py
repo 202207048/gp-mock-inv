@@ -142,15 +142,19 @@ async def get_security(
     """
     특정 종목의 기본 정보를 반환합니다. (종목명, 시장구분, 업종코드)
     DB에 없으면 한국투자증권 현재가의 한글 종목명을 사용합니다.
+    그 이름도 없으면 같은 종목코드의 네이버 검색 결과를 사용합니다.
     실시간 가격은 /price 엔드포인트를 사용하세요.
     """
     security = db.query(ItemMaster).filter(ItemMaster.symbol_code == symbol_code).first()
     if security:
         return security
     listed = await get_listed_stock(symbol_code)
-    if not listed:
-        raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
-    return listed
+    if listed:
+        return listed
+    for item in await search_listed_stocks(symbol_code, 5):
+        if item["symbol_code"] == symbol_code:
+            return item
+    raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
 
 
 @router.get("/{symbol_code}/price", summary="현재가 조회 (KIS API)")
