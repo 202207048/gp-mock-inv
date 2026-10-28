@@ -32,6 +32,10 @@ class OrderRequest(BaseModel):
 
 
 class OrderResponse(BaseModel):
+    name: str | None = None
+    filled_at: datetime | None = None
+    profit_loss: Decimal | None = None
+    profit_rate: Decimal | None = None
     funding_type: str = "현금"
     """
     주문 응답 스키마 (백엔드 → 프론트).

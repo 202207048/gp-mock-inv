@@ -27,6 +27,7 @@ from app.services.kis_service import get_current_price, get_listed_stock
 from app.services.order_service import create_order, check_pending_order
 from app.services.order_book import get_order_book, BOOK_TYPES, ORDER_TYPES
 from app.utils.deps import get_current_user
+from app.services.trade_share import sale_returns
 
 # prefix는 main.py에서 /api/trading/orders 로 지정
 router = APIRouter(tags=["거래"])
@@ -181,12 +182,16 @@ def get_orders(
         .all()
     )
 
-    return [_to_response(o) for o in orders]
+    returns = sale_returns(orders)
+    return [_to_response(o, returns=returns.get(o.order_id)) for o in orders]
 
 
-def _to_response(order: Order, message: str | None = None) -> OrderResponse:
+def _to_response(order: Order, message: str | None = None, returns: dict | None = None) -> OrderResponse:
     """주문 행을 응답 형식으로 바꾼다."""
     return OrderResponse(
+        name=order.item_master.name if order.item_master else None,
+        filled_at=order.filled_at,
+        **(returns or {}),
         funding_type=order.funding_type,
         order_id=order.order_id,
         account_id=order.account_id,

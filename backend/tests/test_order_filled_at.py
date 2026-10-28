@@ -185,10 +185,10 @@ class FilledAtTests(unittest.TestCase):
             self.assertEqual(db.query(Portfolio).count(), 0)
             self.assertEqual(db.get(Account, 1).withdrawable_cash, 1000000)
 
-    def test_order_response_contract_does_not_add_fill_time(self):
+    def test_order_response_exposes_fill_time_for_trade_sharing(self):
         result = self.order().json()
-        self.assertNotIn("filled_at", result)
-        self.assertNotIn("filled_at", OrderResponse.model_fields)
+        self.assertIsNotNone(result['filled_at'])
+        self.assertIn('filled_at', OrderResponse.model_fields)
         with self.Session() as db:
             self.assertIsNotNone(db.get(Order, result["order_id"]).filled_at)
 

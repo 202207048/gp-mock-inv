@@ -53,6 +53,30 @@ class CommunityAttachmentsTests(unittest.TestCase):
     def create(self, **extra):
         return self.client.post('/community/posts', json={'title': '생각', 'content': '본문', **extra})
 
+    def test_sale_share_persists_name_and_historical_profit(self):
+        from datetime import datetime, timezone, timedelta
+        from app.routers.orders import router as orders_router
+        self.client.app.include_router(orders_router, prefix='/orders')
+        now = datetime(2026, 10, 28, tzinfo=timezone.utc)
+        with self.Session() as db:
+            db.get(Order, 1).filled_at = now
+            db.add(Order(order_id=4, account_id=1, symbol_code='005930', order_type='매도',
+                         price=73500, quantity=2, status='체결', filled_at=now + timedelta(minutes=1)))
+            db.commit()
+        listing = self.client.get('/orders', params={'account_id': 1})
+        self.assertEqual(listing.status_code, 200, listing.text)
+        sale = next(row for row in listing.json() if row['order_id'] == 4)
+        self.assertEqual(sale['name'], '삼성전자')
+        self.assertEqual(float(sale['profit_loss']), 7000)
+        self.assertEqual(float(sale['profit_rate']), 5)
+        pid = self.create(trade_id=4).json()['post_id']
+        shared = self.client.get(f'/community/posts/{pid}').json()['attachments']['trade']
+        self.assertEqual(shared['name'], sale['name'])
+        self.assertEqual(float(shared['profit_loss']), 7000)
+        self.assertEqual(float(shared['profit_rate']), 5)
+        self.assertNotIn('account_id', shared)
+        self.assertNotIn('order_id', shared)
+
     def test_all_attachments_survive_list_and_detail(self):
         response = self.create(images=[PNG], symbol_code='005930', trade_id=1, poll={'question': '전망?', 'options': ['상승', '하락']})
         self.assertEqual(response.status_code, 200, response.text)

@@ -27,6 +27,7 @@ from app.models.user import User
 from app.schemas.community import CommentCreateRequest, PostCreateRequest, PostUpdateRequest, VoteRequest
 from app.utils.deps import get_current_user
 from app.services.kis_service import get_listed_stock
+from app.services.trade_share import sale_returns
 
 # prefix는 main.py에서 /api/community 로 지정
 # 최종 경로 예시: /api/community/posts, /api/community/posts/1/like
@@ -169,6 +170,12 @@ async def create_post(
         ).first()
         if not trade:
             raise HTTPException(status_code=422, detail="본인의 체결된 거래만 첨부할 수 있습니다.")
+        returns = {}
+        if trade.order_type == '매도':
+            history = db.query(Order).filter(Order.account_id == trade.account_id,
+                                            Order.symbol_code == trade.symbol_code,
+                                            Order.status == '체결').all()
+            returns = sale_returns(history).get(trade.order_id, {})
         attachments["trade"] = {
             "symbol_code": trade.symbol_code,
             "name": trade.item_master.name,
@@ -176,6 +183,9 @@ async def create_post(
             "quantity": trade.quantity,
             "price": str(trade.price),
             "created_at": trade.created_at.isoformat(),
+            "filled_at": trade.filled_at.isoformat() if trade.filled_at else None,
+            "profit_loss": returns.get('profit_loss'),
+            "profit_rate": returns.get('profit_rate'),
         }
     post = Post(
         user_id=current_user.user_id,
