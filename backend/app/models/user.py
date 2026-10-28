@@ -15,7 +15,7 @@ SQLAlchemy ORM을 사용하므로 이 클래스 하나로
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy import Column, DateTime, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -46,6 +46,7 @@ class User(Base):
 
     # 사용자 이름 (닉네임)
     user_name = Column(String(50), nullable=False)
+    profile_image = Column(Text, nullable=True)
 
     # 이메일 (비밀번호 찾기에 사용)
     email = Column(String(100), unique=True, nullable=False)

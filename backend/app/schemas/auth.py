@@ -12,7 +12,28 @@ Pydantic 스키마(Schema)란?
     Schema (schemas/) → API 요청/응답 형식 정의 (Pydantic)
 """
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from app.schemas.community import PostCreateRequest
+
+
+class ProfileUpdateRequest(BaseModel):
+    user_name: str = Field(min_length=1, max_length=50)
+    profile_image: str | None = Field(default=None, max_length=1400000)
+
+    @field_validator('user_name')
+    @classmethod
+    def valid_name(cls, value):
+        value = value.strip()
+        if not value or any(ord(char) < 32 for char in value):
+            raise ValueError('닉네임을 입력해 주세요. 줄바꿈은 사용할 수 없습니다.')
+        return value
+
+    @field_validator('profile_image')
+    @classmethod
+    def valid_image(cls, value):
+        if value is not None:
+            PostCreateRequest.valid_images([value])
+        return value
 
 
 class DeleteUserRequest(BaseModel):
@@ -83,6 +104,7 @@ class UserResponse(BaseModel):
     user_name: str
     email: str
     investment_style: str | None = None  # 투자성향 미설정 시 null
+    profile_image: str | None = None
 
     class Config:
         # from_attributes=True: SQLAlchemy 모델 객체를 Pydantic으로 변환 허용

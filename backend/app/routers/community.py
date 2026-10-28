@@ -24,7 +24,7 @@ from app.models.account import Account
 from app.models.order import Order
 from app.models.security import ItemMaster
 from app.models.user import User
-from app.schemas.community import CommentCreateRequest, PostCreateRequest, VoteRequest
+from app.schemas.community import CommentCreateRequest, PostCreateRequest, PostUpdateRequest, VoteRequest
 from app.utils.deps import get_current_user
 from app.services.kis_service import get_listed_stock
 
@@ -38,8 +38,15 @@ def community_capabilities():
     return {"attachments": True, "polls": True, "quotes": True}
 
 
-def post_attachments(post, user_id):
+def post_attachments(post, user_id, db):
     attachments = dict(post.attachments or {})
+    if attachments.get('quote'):
+        quote = dict(attachments['quote'])
+        original = db.get(Post, quote.get('post_id'))
+        if original and original.author:
+            quote['author_name'] = original.author.user_name
+            quote['author_profile_image'] = original.author.profile_image
+        attachments['quote'] = quote
     if attachments.get("poll"):
         poll = dict(attachments["poll"])
         counts = [0] * len(poll["options"])
@@ -104,11 +111,13 @@ def get_posts(
         "items": [
             {
                 "post_id": p.post_id,
+                "user_id": p.user_id,
                 "title": p.title,
                 "content": p.content,
-                "attachments": post_attachments(p, current_user.user_id),
+                "attachments": post_attachments(p, current_user.user_id, db),
                 # p.author: Post 모델의 relationship으로 User 객체 바로 접근
                 "author_name": p.author.user_name if p.author else "",
+                "author_profile_image": p.author.profile_image if p.author else None,
                 "symbol_code": p.symbol_code,
                 "created_at": p.created_at,
                 "like_count": len(p.likes),       # 좋아요 수
@@ -196,10 +205,12 @@ def get_post(
 
     return {
         "post_id": post.post_id,
+        "user_id": post.user_id,
         "title": post.title,
         "content": post.content,
-        "attachments": post_attachments(post, current_user.user_id),
+        "attachments": post_attachments(post, current_user.user_id, db),
         "author_name": post.author.user_name if post.author else "",
+        "author_profile_image": post.author.profile_image if post.author else None,
         "symbol_code": post.symbol_code,
         "created_at": post.created_at,
         "like_count": len(post.likes),
@@ -209,12 +220,29 @@ def get_post(
             {
                 "comment_id": c.comment_id,
                 "author_name": c.author.user_name if c.author else "",
+                "author_profile_image": c.author.profile_image if c.author else None,
                 "content": c.content,
                 "created_at": c.created_at,
             }
             for c in post.comments
         ],
     }
+
+
+@router.put('/posts/{post_id}', summary='게시글 수정')
+def update_post(
+    post_id: int,
+    req: PostUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    post = db.query(Post).filter(Post.post_id == post_id, Post.user_id == current_user.user_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail='게시글을 찾을 수 없거나 권한이 없습니다.')
+    post.title = req.title
+    post.content = req.content
+    db.commit()
+    return {'post_id': post.post_id, 'message': '게시글이 수정되었습니다.'}
 
 
 @router.delete("/posts/{post_id}", summary="게시글 삭제")
@@ -323,4 +351,4 @@ def vote_post(post_id: int, req: VoteRequest,
         db.add(PostVote(post_id=post_id, user_id=current_user.user_id, option_index=req.option_index))
     db.commit()
     db.refresh(post)
-    return post_attachments(post, current_user.user_id)["poll"]
+    return post_attachments(post, current_user.user_id, db)["poll"]

@@ -27,6 +27,7 @@ from app.schemas.auth import (
     RegisterRequest,
     TokenResponse,
     UserResponse,
+    ProfileUpdateRequest,
 )
 from app.services.auth_service import login_user, register_user
 from app.services.withdrawal_service import withdraw_user
@@ -37,6 +38,20 @@ from app.utils.deps import get_current_user
 # prefix는 main.py에서 /api/users 로 지정하므로 여기선 비워둠
 # 최종 경로 예시: /api/users/register, /api/users/login
 router = APIRouter(tags=["사용자/인증"])
+
+
+@router.put('/me', response_model=UserResponse, summary='프로필 수정')
+def update_profile(
+    req: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.user_name = req.user_name
+    if 'profile_image' in req.model_fields_set:
+        current_user.profile_image = req.profile_image
+    db.commit()
+    db.refresh(current_user)
+    return current_user
 
 
 @router.delete("/me", status_code=204, summary="회원탈퇴")

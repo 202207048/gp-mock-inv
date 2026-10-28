@@ -62,6 +62,18 @@ class PostCreateRequest(BaseModel):
         return values
 
 
+class PostUpdateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=10000)
+
+    @field_validator('title', 'content')
+    @classmethod
+    def nonblank(cls, value):
+        if not value.strip():
+            raise ValueError('제목과 내용을 입력해 주세요.')
+        return value.strip()
+
+
 class VoteRequest(BaseModel):
     option_index: int = Field(ge=0, le=3)
 
@@ -69,6 +81,7 @@ class VoteRequest(BaseModel):
 class PostResponse(BaseModel):
     post_id: int
     user_id: int
+    author_profile_image: str | None = None
     author_name: str
     symbol_code: str | None
     title: str
@@ -88,6 +101,7 @@ class CommentCreateRequest(BaseModel):
 class CommentResponse(BaseModel):
     comment_id: int
     user_id: int
+    author_profile_image: str | None = None
     author_name: str
     content: str
     created_at: datetime

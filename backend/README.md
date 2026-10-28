@@ -1,3 +1,13 @@
+## 프로필 설정 (2026-10-28)
+
+새 서버 코드 실행 전에 `backend`에서 `alembic upgrade head`를 실행해
+`h20261028_user_profile`을 적용합니다. `users.profile_image` nullable TEXT 컬럼을 추가하며,
+기존 `user_name`을 닉네임으로 사용합니다. 운영 DB에는 2026-10-28 적용했고 컬럼과 migration 버전을 확인했습니다.
+
+`PUT /api/users/me`는 로그인한 본인의 `user_name`(1~50자)과 `profile_image`를 저장합니다.
+사진은 1MB 이하 JPG/PNG/WEBP data URL이며, null은 삭제, 필드 생략은 기존 사진 유지입니다.
+게시글·댓글 작성자와 인용글 닉네임은 조회 시 현재 프로필을 반영합니다.
+
 ## 통합 배포 migration (2026-10-21)
 
 배포 전/배포 시 `alembic upgrade head`로 `g20261021_ai_community_merge`까지 적용합니다.
