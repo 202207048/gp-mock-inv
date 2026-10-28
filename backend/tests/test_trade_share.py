@@ -12,6 +12,13 @@ def trade(oid, side, price, qty, **extra):
 
 
 class TradeShareTests(unittest.TestCase):
+    def test_saved_basis_overrides_incomplete_or_reconstructed_history(self):
+        sell = trade(2, '매도', '239500', 1, sale_cost_basis=Decimal('251714'))
+        for history in ([sell], [trade(1, '매수', '100', 7, filled_at=None), sell],
+                        [trade(1, '매수', '100', 7), sell]):
+            result = sale_returns(history)
+            self.assertEqual(Decimal(result[2]['profit_loss']), Decimal('-12214'))
+
     def test_weighted_cost_partial_sales_and_new_position(self):
         history = [trade(1, '매수', '10000', 10), trade(2, '매수', '20000', 10),
                    trade(3, '매도', '16500', 10), trade(4, '매도', '12000', 10),

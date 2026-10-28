@@ -34,7 +34,7 @@ class OrderRequest(BaseModel):
 class OrderResponse(BaseModel):
     name: str | None = None
     filled_at: datetime | None = None
-    profit_loss: Decimal | None = None
+    profit_loss: Decimal | None = Field(None, description="매도 체결 시 저장한 평균 매수 원가 우선 적용 · 수수료·세금 제외 손익")
     profit_rate: Decimal | None = None
     funding_type: str = "현금"
     """

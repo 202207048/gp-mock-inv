@@ -5,6 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 
 def sale_returns(orders):
+    orders = list(orders)
     groups = defaultdict(list)
     for order in orders:
         if order.status == '체결':
@@ -41,4 +42,16 @@ def sale_returns(orders):
                     average = Decimal(0)
             else:
                 break
+    # An execution snapshot is authoritative even when earlier trades lack dates.
+    for order in orders:
+        basis = getattr(order, 'sale_cost_basis', None)
+        if order.status != '체결' or order.order_type != '매도' or basis is None:
+            continue
+        basis = Decimal(str(basis))
+        price = Decimal(str(order.price))
+        if basis.is_finite() and basis > 0 and price.is_finite() and price > 0 and order.quantity > 0:
+            result[order.order_id] = {
+                'profit_loss': str((price - basis) * order.quantity),
+                'profit_rate': str((price - basis) / basis * 100),
+            }
     return result

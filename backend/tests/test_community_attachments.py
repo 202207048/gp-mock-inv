@@ -76,6 +76,16 @@ class CommunityAttachmentsTests(unittest.TestCase):
         self.assertEqual(float(shared['profit_rate']), 5)
         self.assertNotIn('account_id', shared)
         self.assertNotIn('order_id', shared)
+        # Legacy purchases must not hide a sale's captured execution cost basis.
+        with self.Session() as db:
+            db.get(Order, 1).filled_at = None
+            db.get(Order, 4).sale_cost_basis = 71000
+            db.commit()
+        updated = self.client.get('/orders', params={'account_id': 1}).json()
+        self.assertEqual(float(next(row for row in updated if row['order_id'] == 4)['profit_loss']), 5000)
+        pid = self.create(trade_id=4).json()['post_id']
+        captured = self.client.get(f'/community/posts/{pid}').json()['attachments']['trade']
+        self.assertEqual(float(captured['profit_loss']), 5000)
 
     def test_all_attachments_survive_list_and_detail(self):
         response = self.create(images=[PNG], symbol_code='005930', trade_id=1, poll={'question': '전망?', 'options': ['상승', '하락']})

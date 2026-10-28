@@ -67,6 +67,8 @@ class Order(Base):
 
     # 실제 잔고 반영 시각(UTC). 미체결 및 체결 시각을 모르는 과거 주문은 NULL.
     filled_at = Column(DateTime(timezone=True), nullable=True)
+    # Preserve actual cost before a sale changes/deletes the holding.
+    sale_cost_basis = Column(Numeric(20, 6), nullable=True)
 
     # 관계 설정
     account = relationship("Account", back_populates="orders")

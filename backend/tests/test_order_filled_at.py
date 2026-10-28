@@ -54,6 +54,7 @@ class FilledAtTests(unittest.TestCase):
             later = NOW + timedelta(seconds=1)
             order = self.create(db, now=later, order_type="매도")
             self.assertEqual(stored_utc(order.filled_at), later)
+            self.assertEqual(order.sale_cost_basis, Decimal(50000))
             self.assertEqual(order.status, "체결")
             self.assertEqual(order.tax, 180)
             self.assertEqual(db.query(Portfolio).count(), 0)
@@ -92,6 +93,7 @@ class FilledAtTests(unittest.TestCase):
             checked = service.check_pending_order(db, order.order_id, 1, 1,
                                                   dict(self.book, bid=50000, ask=50100), now=later)
             self.assertEqual(checked.status, "체결")
+            self.assertEqual(checked.sale_cost_basis, Decimal(50000))
             self.assertEqual(stored_utc(checked.filled_at), later)
             self.assertEqual(db.query(Portfolio).count(), 0)
 

@@ -142,11 +142,12 @@ def create_order(
         shortfall = misu.validate_misu(db, account, req, gross, commission, now)
         account.withdrawable_cash += shortfall
         account.balance += shortfall
+    sale_cost_basis = None
     if fill_now:
         if req.order_type == "매수":
             _process_buy(db, account, req, cash_out, order_price)
         else:
-            _process_sell(db, account, req, cash_in)
+            sale_cost_basis = _process_sell(db, account, req, cash_in)
         status = "체결"
     else:
         if req.order_type == "매수" and account.withdrawable_cash < cash_out:
@@ -177,6 +178,7 @@ def create_order(
         status=status,
         funding_type=req.funding_type,
         filled_at=now if fill_now else None,
+        sale_cost_basis=sale_cost_basis,
     )
     db.add(order)
     db.flush()
@@ -220,7 +222,7 @@ def check_pending_order(
                 misu.assert_buy_allowed(db, account, now=now)
                 _process_buy(db, account, req, gross + commission, price)
             else:
-                _process_sell(db, account, req, gross - commission - tax)
+                order.sale_cost_basis = _process_sell(db, account, req, gross - commission - tax)
         except HTTPException as exc:
             if exc.status_code != 400:
                 raise
@@ -325,9 +327,11 @@ def _process_sell(
     if not portfolio or portfolio.hold_quantity < req.quantity:
         raise HTTPException(status_code=400, detail="보유 수량이 부족합니다.")
 
+    sale_cost_basis = portfolio.avg_price
     portfolio.hold_quantity -= req.quantity
     account.withdrawable_cash += total_amount
     account.balance += total_amount
 
     if portfolio.hold_quantity == 0:
         db.delete(portfolio)
+    return sale_cost_basis
