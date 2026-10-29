@@ -258,6 +258,9 @@ def test_prompt_payload_is_exact_json_decimal_and_excludes_execution_control():
     instructions, serialized = prompt.split("\n\n", 1)
     expected = {k: deepcopy(v) for k, v in before.items() if k not in {"profile", "include_ai_metadata"}}
     expected["holding"]["return_rate"] = "5.71"
+    expected["position"]["started_at"] = "2026년 10월 20일 10:00"
+    expected["trades"][0]["filled_at"] = "2026년 10월 20일 10:00"
+    expected["trades"][1]["filled_at"] = "2026년 10월 21일 10:00"
     assert json.loads(serialized) == expected
     assert '"avg_price": "70000"' in serialized
     assert request.model_dump(mode="json") == before
@@ -754,3 +757,29 @@ def test_provider_receives_normalized_prompt_for_all_percentage_fields(adapter_t
     assert payload["entry_price_context"]["opening_vs_prior_close_pct"] == "0.29"
     assert payload["entry_price_context"]["prior_close"] == "69800"
     assert request.model_dump(mode="json") == before
+
+
+@pytest.mark.parametrize('value,expected',[
+ ('2026-10-01T00:01:00+00:00','2026년 10월 1일 09:01'),
+ ('2026-10-01T15:30:00+00:00','2026년 10월 2일 00:30'),
+ ('2026-10-01T00:01:00','2026년 10월 1일 09:01'),
+ (None,None)])
+def test_prompt_datetime_kst(value,expected):
+    from datetime import datetime
+    from app.summarizers.portfolio import _prompt_datetime
+    assert _prompt_datetime(datetime.fromisoformat(value) if value else None)==expected
+
+
+def test_prompt_dates_converted_without_mutation():
+    import re
+    from datetime import date
+    from app.summarizers.portfolio import _prompt_datetime
+    request=PortfolioBriefRequest.model_validate(REQUEST)
+    before=request.model_dump()
+    prompt=build_portfolio_brief_prompt(request)
+    payload=json.loads(prompt.split('\n\n',1)[1])
+    assert payload['position']['started_at']=='2026년 10월 20일 10:00'
+    assert payload['trades'][0]['filled_at']=='2026년 10월 20일 10:00'
+    assert not re.search(r'\d{4}-\d{2}-\d{2}T|\+00:00',json.dumps(payload))
+    assert _prompt_datetime(date(2026,9,30))=='2026년 9월 30일'
+    assert request.model_dump()==before
