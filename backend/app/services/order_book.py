@@ -4,7 +4,7 @@ from decimal import Decimal, ROUND_DOWN
 import httpx
 from fastapi import HTTPException
 from app.config import settings
-from app.services.kis_service import KIS_MOCK_URL, get_kis_token, _assert_read_only
+from app.services.kis_service import KIS_MOCK_URL, get_kis_token, _assert_read_only, mock_request
 
 BOOK_TYPES = {"중간가", "최유리지정가", "최우선지정가"}
 ORDER_TYPES = BOOK_TYPES | {"지정가", "시장가"}
@@ -17,7 +17,7 @@ async def get_order_book(symbol_code: str) -> dict:
     _assert_read_only(tr_id)
     token = await get_kis_token()
     async with httpx.AsyncClient(verify=False, timeout=10) as client:
-        response = await client.get(
+        response = await mock_request(client, "get",
             f"{KIS_MOCK_URL}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn",
             headers={"authorization": f"Bearer {token}", "appkey": settings.KIS_APP_KEY,
                      "appsecret": settings.KIS_APP_SECRET, "tr_id": tr_id, "custtype": "P"},

@@ -85,7 +85,7 @@ class _ChartClient:
         async with _request_lock:
             await asyncio.sleep(max(0, (0.12 if self.real else 1.1) - (monotonic() - _last_request)))
             _last_request = monotonic()
-            response = await self.client.get(f'{base}/uapi/domestic-stock/v1/quotations/{endpoint}',
+            response = await kis.mock_request(self.client, "get", f'{base}/uapi/domestic-stock/v1/quotations/{endpoint}',
                                              headers=headers, params=params)
         response.raise_for_status()
         data = response.json()
