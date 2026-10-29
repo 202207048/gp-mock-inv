@@ -28,7 +28,7 @@ ProfileId = Annotated[str, StringConstraints(
     strict=True, strip_whitespace=False, pattern=r"^[a-z][a-z0-9_-]{0,31}$",
 )]
 ProfileRevision = Annotated[int, Field(strict=True, ge=1)]
-ProfileTask = Literal["news_analysis", "stock_news_summary", "portfolio_brief"]
+ProfileTask = Literal["news_analysis", "stock_news_summary", "portfolio_brief", "pattern_brief"]
 
 
 class ModelProfileCatalogEntry(Schema):

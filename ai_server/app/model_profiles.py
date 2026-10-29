@@ -9,6 +9,7 @@ from .analyzers.openai import OpenAINewsAnalyzer
 from .schemas import AIExecutionMetadata, ModelProfileCatalogEntry, ProfileTask
 from .summarizers.openai import OpenAIStockNewsSummarizer
 from .summarizers.portfolio_openai import OpenAIPortfolioBriefGenerator
+from .summarizers.pattern_openai import OpenAIPatternBriefGenerator
 
 
 class ProfileValidationError(ValueError):
@@ -48,14 +49,14 @@ DEFAULT_PROFILES = (
     ModelProfile(
         id="luna", revision=1, display_name="GPT-6 Luna", provider="openai",
         model="gpt-6-luna", enabled=True,
-        supported_tasks=("news_analysis", "stock_news_summary", "portfolio_brief"),
+        supported_tasks=("news_analysis", "stock_news_summary", "portfolio_brief", "pattern_brief"),
         generation=GenerationConfig(reasoning_effort="none"),
         description="기본 추천 뉴스 분석·요약 모델",
     ),
     ModelProfile(
         id="sol", revision=1, display_name="GPT-6.1 Sol", provider="openai",
         model="gpt-6.1-sol", enabled=True,
-        supported_tasks=("news_analysis", "stock_news_summary", "portfolio_brief"),
+        supported_tasks=("news_analysis", "stock_news_summary", "portfolio_brief", "pattern_brief"),
         generation=GenerationConfig(reasoning_effort="low"),
         description="고품질 비교 후보; 일반적인 품질 우위를 보장하지 않음",
         category="experimental",
@@ -103,6 +104,7 @@ def create_profile_adapter(context: ResolvedProfile):
         "news_analysis": OpenAINewsAnalyzer,
         "stock_news_summary": OpenAIStockNewsSummarizer,
         "portfolio_brief": OpenAIPortfolioBriefGenerator,
+        "pattern_brief": OpenAIPatternBriefGenerator,
     }[context.task]
     return factory(api_key=key, model=profile.model,
                    reasoning_effort=profile.generation.reasoning_effort)

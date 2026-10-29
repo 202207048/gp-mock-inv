@@ -34,6 +34,12 @@ from .summarizers.portfolio_openai import OpenAIPortfolioBriefGenerator
 from .summarizers.portfolio_gemini import GeminiPortfolioBriefGenerator
 
 
+from .pattern_schemas import PatternBriefRequest, PatternBriefResponse
+from .summarizers.pattern import PatternBriefGenerator
+from .summarizers.pattern_openai import OpenAIPatternBriefGenerator
+from .summarizers.pattern_gemini import GeminiPatternBriefGenerator
+
+
 app = FastAPI(title="News AI Analysis")
 app.state.provider_manager = RuntimeProviderManager(get_ai_provider())
 app.state.model_profiles = ModelProfileRegistry()
@@ -233,3 +239,45 @@ def generate_portfolio_brief(
         return _execution_failure("Portfolio brief failed", exc, request.include_ai_metadata, context)
     except ValueError as exc:
         raise HTTPException(502, detail="Portfolio brief failed") from exc
+
+
+
+
+def resolve_pattern_profile(request: PatternBriefRequest) -> ResolvedProfile | None:
+    return _resolve_profile(request.profile, "pattern_brief")
+
+
+def get_pattern_brief_generator(
+    context: Annotated[ResolvedProfile | None, Depends(resolve_pattern_profile)] = None,
+) -> PatternBriefGenerator:
+    try:
+        if context is not None:
+            return create_profile_adapter(context)
+        provider, model = app.state.provider_manager.get_settings()
+        if provider == "openai":
+            return OpenAIPatternBriefGenerator(model=model)
+        return GeminiPatternBriefGenerator(model=model)
+    except (SummarizerUnavailableError, ProfileUnavailableError) as exc:
+        raise HTTPException(503, detail="Pattern brief generator unavailable") from exc
+    except Exception as exc:
+        raise HTTPException(502, detail="Pattern brief generator initialization failed") from exc
+
+
+@app.post("/brief/pattern", response_model=PatternBriefResponse, response_model_exclude_unset=True)
+def generate_pattern_brief(
+    request: PatternBriefRequest,
+    http_request: Request,
+    generator: PatternBriefGenerator = Depends(get_pattern_brief_generator),
+    context: ResolvedProfile | None = Depends(resolve_pattern_profile),
+) -> PatternBriefResponse | JSONResponse:
+    try:
+        outcome = generator.generate_with_metadata(request, trace_id=http_request.state.trace_id)
+        metadata = profile_metadata(outcome.metadata, context)
+        return PatternBriefResponse(
+            **outcome.result.model_dump(), provider=metadata.provider, model=metadata.model,
+            **({"ai": metadata} if request.include_ai_metadata else {}),
+        )
+    except SummarizerError as exc:
+        return _execution_failure("Pattern brief failed", exc, request.include_ai_metadata, context)
+    except ValueError as exc:
+        raise HTTPException(502, detail="Pattern brief failed") from exc

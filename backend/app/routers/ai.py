@@ -10,7 +10,7 @@ routers/ai.py - AI 및 투자성향 설문 API 엔드포인트
     [AI 서버 연동 - AI팀 서버가 필요]
     GET  /api/ai/news-summary/{code}→ 오늘 등락과 종목 뉴스를 연결한 짧은 설명
     GET  /api/ai/recommend          → AI 종목 추천
-    GET  /api/ai/pattern            → 매매 패턴 분석
+    POST /api/ai/pattern            → 매매 패턴 회고
 """
 
 from datetime import datetime, timedelta
@@ -24,6 +24,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.schemas.pattern_brief import PatternFacts, PatternBrief, PatternPublicResponse, PatternGenerateRequest, PatternInsufficient
+from app.services.pattern_brief_service import build_pattern_facts
+from app.services.pattern_brief_client import PatternBriefUnavailable, request_pattern_brief
+
 from app.services.ai_service_auth import AIServiceNotConfigured, service_headers
 from app.database import get_db
 from app.models.account import Account
@@ -388,16 +392,6 @@ async def ai_recommend(current_user: User = Depends(get_current_user)):
     )
 
 
-@router.get("/pattern", summary="매매 패턴 분석 (AI팀 서버 필요)")
-async def ai_pattern(current_user: User = Depends(get_current_user)):
-    """
-    유저의 매매 패턴을 AI가 분석합니다.
-
-    예시: "고점 추격 매수 패턴", "패닉셀 경향" 등
-    """
-    return await _call_ai("/pattern", {"user_id": current_user.user_id})
-
-
 _summary_cache: dict = {}
 _SUMMARY_CACHE_SECONDS = 180
 
@@ -551,3 +545,34 @@ async def portfolio_brief(
     return PortfolioBriefResponse(
         symbol_code=facts.symbol_code, security_name=facts.security_name, **result.brief(),
     )
+
+
+
+
+def pattern_facts_dependency(account_id: int = Query(..., gt=0),
+                             user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return build_pattern_facts(db, account_id, user.user_id)
+
+
+@router.get("/pattern/facts", response_model=PatternFacts)
+def pattern_facts(facts: PatternFacts = Depends(pattern_facts_dependency)):
+    return facts
+
+
+@router.post("/pattern", response_model=PatternPublicResponse | PatternInsufficient)
+async def pattern_brief(body: PatternGenerateRequest, request: Request, response: Response,
+                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    facts = await asyncio.to_thread(build_pattern_facts, db, body.account_id, user.user_id)
+    filled_count = int(facts.counts.buy_filled + facts.counts.sell_filled)
+    if filled_count < 3:
+        return PatternInsufficient(filled_count=filled_count)
+    trace_id = uuid4()
+    response.headers["X-Trace-ID"] = str(trace_id)
+    request.state.trace_id = trace_id
+    request.state.ai_execution = None
+    try:
+        result = await request_pattern_brief(settings.AI_SERVER_URL, facts, profile=body.profile, trace_id=trace_id)
+    except PatternBriefUnavailable as exc:
+        raise HTTPException(exc.status_code, detail=str(exc), headers={"X-Trace-ID":str(trace_id)}) from None
+    request.state.ai_execution = result.ai
+    return PatternPublicResponse.model_validate({**result.brief(), "style_tags": facts.style_tags})
