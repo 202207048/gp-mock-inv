@@ -575,4 +575,8 @@ async def pattern_brief(body: PatternGenerateRequest, request: Request, response
     except PatternBriefUnavailable as exc:
         raise HTTPException(exc.status_code, detail=str(exc), headers={"X-Trace-ID":str(trace_id)}) from None
     request.state.ai_execution = result.ai
-    return PatternPublicResponse.model_validate({**result.brief(), "style_tags": facts.style_tags})
+    return PatternPublicResponse.model_validate({
+        **result.brief(), "style_tags": facts.style_tags, "data_confidence": facts.data_confidence,
+        "filled_count": int(facts.counts.buy_filled + facts.counts.sell_filled),
+        "investment_style_description": facts.investment_style_description,
+    })

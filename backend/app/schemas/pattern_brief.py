@@ -83,6 +83,15 @@ class PatternTiming(Schema):
 
 
 KNOWN_INVESTMENT_STYLES = {"안정형", "안정추구형", "위험중립형", "적극투자형", "공격투자형"}
+INVESTMENT_STYLE_DESCRIPTIONS = {
+    "안정형": "원금 손실을 원하지 않고 예금 수준의 안정성을 중시",
+    "안정추구형": "원금 손실을 최소화하며 안정적인 수익을 중시",
+    "위험중립형": "수익을 위해 어느 정도의 손실 가능성을 받아들임",
+    "적극투자형": "원금 보전보다 높은 수익을 추구하며 상당한 손실 가능성을 받아들임",
+    "공격투자형": "높은 수익을 위해 큰 손실 가능성도 적극적으로 받아들임",
+}
+DataConfidence = Literal["preliminary", "moderate", "sufficient"]
+
 TAG_LABELS = {
     "day_trading": "당일 매매", "short_term": "단기 매매", "swing": "스윙 매매", "long_term": "중장기 보유",
     "concentrated": "한 종목 집중", "diversified": "분산 투자", "market_order_heavy": "시장가 위주",
@@ -93,6 +102,7 @@ TagCode = Literal["day_trading", "short_term", "swing", "long_term", "concentrat
 
 
 class HoldingDuration(Schema):
+    matched_sell_orders: Count
     matched_sell_quantity: Count
     unmatched_sell_quantity: Count
     avg_holding_days: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)] | None
@@ -119,16 +129,22 @@ class StyleTag(Schema):
         return self
 
 
-ComparisonCode = Literal["uses_misu", "concentrated", "day_trading", "diversified", "no_misu"]
+ComparisonCode = Literal["uses_misu", "concentrated", "day_trading", "market_heavy", "opening_heavy",
+                         "no_misu", "diversified", "patient_hold", "limit_used", "spread_timing"]
+
+
+class BehaviorStrength(Schema):
+    code: ComparisonCode
+    strength: Percent
 
 
 class StyleComparisonBasis(Schema):
-    matches: list[ComparisonCode] = Field(max_length=3)
-    differs: list[ComparisonCode] = Field(max_length=3)
+    matches: list[BehaviorStrength] = Field(max_length=3)
+    differs: list[BehaviorStrength] = Field(max_length=3)
 
     @model_validator(mode="after")
     def unique_codes(self):
-        codes = self.matches + self.differs
+        codes = [item.code for item in self.matches + self.differs]
         if len(set(codes)) != len(codes):
             raise ValueError("Duplicate comparison code")
         return self
@@ -162,9 +178,19 @@ class PatternFacts(Schema):
     holdings_count: Count
     investment_style: str | None = Field(max_length=200)
     style_comparison_basis: StyleComparisonBasis | None
+    pattern_highlights: list[BehaviorStrength] = Field(max_length=10)
+    data_confidence: DataConfidence
+    investment_style_description: str | None = Field(max_length=200)
 
     @model_validator(mode="after")
     def known_style_basis(self):
+        count = self.counts.buy_filled + self.counts.sell_filled
+        expected = "preliminary" if count < 10 else "moderate" if count < 30 else "sufficient"
+        if self.data_confidence != expected:
+            raise ValueError("Inconsistent data confidence")
+        if self.data_confidence == "preliminary" and self.style_comparison_basis is not None:
+            if len(self.style_comparison_basis.matches) > 1 or len(self.style_comparison_basis.differs) > 1:
+                raise ValueError("Preliminary comparison exceeds sample limit")
         if self.investment_style not in KNOWN_INVESTMENT_STYLES and self.style_comparison_basis is not None:
             raise ValueError("Unknown investment style cannot have comparison basis")
         return self
@@ -183,7 +209,7 @@ class ObservedPattern(Schema):
 
 class PatternBrief(Schema):
     headline: str = Field(strict=True, min_length=1, max_length=1000)
-    observed_patterns: list[ObservedPattern] = Field(min_length=2, max_length=4)
+    observed_patterns: list[ObservedPattern] = Field(min_length=1, max_length=4)
     style_comparison: StyleComparison | None
     limitations: list[SummaryText] = Field(max_length=10)
     disclaimer: Literal["모의투자 연습용 설명이며 투자 권유가 아닙니다."]
@@ -207,12 +233,17 @@ class PatternInsufficient(Schema):
 
 
 class PatternPublicResponse(PatternBrief):
+    data_confidence: DataConfidence
+    filled_count: int = Field(strict=True, ge=0)
+    investment_style_description: str | None = Field(max_length=200)
     style_tags: list[StyleTag] = Field(max_length=5)
 
 
 def validate_comparison_basis(brief: PatternBrief, facts: PatternFacts) -> None:
     basis = facts.style_comparison_basis
     comparison = brief.style_comparison
+    if facts.data_confidence != "preliminary" and len(brief.observed_patterns) < 2:
+        raise ValueError("At least two observations required")
     if basis is None:
         if comparison is not None:
             raise ValueError("Unexpected style comparison")
@@ -220,5 +251,5 @@ def validate_comparison_basis(brief: PatternBrief, facts: PatternFacts) -> None:
     if comparison is None:
         raise ValueError("Missing style comparison")
     for field in ("matches", "differs"):
-        if [item.code for item in getattr(comparison, field)] != getattr(basis, field):
+        if [item.code for item in getattr(comparison, field)] != [item.code for item in getattr(basis, field)]:
             raise ValueError("Comparison codes do not match basis")

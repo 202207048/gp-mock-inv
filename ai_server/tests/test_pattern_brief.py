@@ -21,10 +21,14 @@ FACTS = {
        'top_symbols':[{'symbol_code':'TEST01','name':'합성종목','buy_share_pct':'66.66666666666666666666666667'}]},
     'realized': {'sells_with_basis':4,'wins':2,'losses':2,'breakeven':0,'unknown_basis':0,'avg_realized_return_pct':'-13.68498708963482109922537809'},
     'order_style': {'market_ratio_pct':'50.005','limit_ratio_pct':'49.995','misu_count':0},
-    'holding':{'matched_sell_quantity':0,'unmatched_sell_quantity':0,'avg_holding_days':None,'same_day_ratio_pct':None},
-    'style_tags':[], 'style_comparison_basis':None,
+    'holding':{'matched_sell_orders':0,'matched_sell_quantity':0,'unmatched_sell_quantity':0,'avg_holding_days':None,'same_day_ratio_pct':None},
+    'style_tags':[], 'style_comparison_basis':None, 'pattern_highlights':[],
+    'data_confidence':'moderate','investment_style_description':None,
     'timing': {'opening_30min_ratio_pct':'-0.000'},'holdings_count':2,'investment_style':None,
 }
+def weighted_basis(codes):
+    return {field:[{'code':code,'strength':60} for code in values] for field,values in codes.items()}
+
 BODY = {'headline':'제공된 기간의 거래를 돌아봅니다.',
  'observed_patterns':[{'title':'거래 횟수','evidence':'매수 체결은 10건입니다.'},
                       {'title':'매도 횟수','evidence':'매도 체결은 4건입니다.'}],
@@ -152,7 +156,7 @@ def test_unknown_profile_and_invalid_request_before_generation(client):
 
 def test_metadata_opt_in_and_known_style(client):
     facts=deepcopy(FACTS);facts['investment_style']='안정추구형'
-    facts['style_comparison_basis']={'matches':['no_misu'],'differs':[]}
+    facts['style_comparison_basis']=weighted_basis({'matches':['no_misu'],'differs':[]})
     gen,_=adapter(OpenAIPatternBriefGenerator,BODY|{'style_comparison':{'matches':[{'code':'no_misu','text':'안정추구형처럼 미수 0건으로 거래했어요.'}],'differs':[]}})
     main.app.dependency_overrides[main.get_pattern_brief_generator]=lambda:gen
     result=client.post('/brief/pattern',json={'facts':facts})
@@ -236,7 +240,7 @@ def test_unknown_style_has_no_invented_reference_explanation():
 
 def test_prompt_null_zero_language_and_existing_safety_rules():
     rules=build_pattern_brief_prompt(PatternBriefRequest(facts=deepcopy(FACTS))).split('\n\n',1)[0]
-    for phrase in ('해요체','days 값을 무시','같은 날','현재 보유 종목 없음',
+    for phrase in ('해요체','days 값을 무시','같은 날','holdings_count=0은 현재 보유가 없다는 뜻',
                    '손익률 자체를 언급하지','style_comparison는 반드시 null',
                    '이익 낸 매도','손실 난 매도','손익을 확인할 수 있는 매도',
                    '주문 생성 시각 기준이지','체결 시각이 아니므로',
@@ -258,11 +262,11 @@ def test_style_uses_only_behavior_and_zero_return_sales_are_known(style):
 
 
 @pytest.mark.parametrize('holding',[
- {'matched_sell_quantity':-1,'unmatched_sell_quantity':0,'avg_holding_days':None,'same_day_ratio_pct':None},
- {'matched_sell_quantity':0,'unmatched_sell_quantity':-1,'avg_holding_days':None,'same_day_ratio_pct':None},
- {'matched_sell_quantity':1,'unmatched_sell_quantity':0,'avg_holding_days':'NaN','same_day_ratio_pct':0},
- {'matched_sell_quantity':1,'unmatched_sell_quantity':0,'avg_holding_days':1,'same_day_ratio_pct':101},
- {'matched_sell_quantity':0,'unmatched_sell_quantity':0,'avg_holding_days':0,'same_day_ratio_pct':0},
+ {'matched_sell_orders':0,'matched_sell_quantity':-1,'unmatched_sell_quantity':0,'avg_holding_days':None,'same_day_ratio_pct':None},
+ {'matched_sell_orders':0,'matched_sell_quantity':0,'unmatched_sell_quantity':-1,'avg_holding_days':None,'same_day_ratio_pct':None},
+ {'matched_sell_orders':0,'matched_sell_quantity':1,'unmatched_sell_quantity':0,'avg_holding_days':'NaN','same_day_ratio_pct':0},
+ {'matched_sell_orders':0,'matched_sell_quantity':1,'unmatched_sell_quantity':0,'avg_holding_days':1,'same_day_ratio_pct':101},
+ {'matched_sell_orders':0,'matched_sell_quantity':0,'unmatched_sell_quantity':0,'avg_holding_days':0,'same_day_ratio_pct':0},
 ])
 def test_holding_contract_rejects_invalid_statistics(holding):
     facts=deepcopy(FACTS);facts['holding']=holding
@@ -325,7 +329,7 @@ def test_final_prompt_holding_comparison_and_no_questions():
 ])
 def test_basis_code_order_missing_extra_rejected(client,cls,codes):
     facts=deepcopy(FACTS);facts['investment_style']='안정추구형'
-    facts['style_comparison_basis']={'matches':['no_misu'],'differs':['uses_misu','concentrated']}
+    facts['style_comparison_basis']=weighted_basis({'matches':['no_misu'],'differs':['uses_misu','concentrated']})
     comparison={field:[{'code':code,'text':'안정추구형과 비교하면 1건이었어요.'} for code in values]
                 for field,values in codes.items()}
     gen,call=adapter(cls,BODY|{'style_comparison':comparison})
@@ -338,7 +342,7 @@ def test_basis_code_order_missing_extra_rejected(client,cls,codes):
 @pytest.mark.parametrize('basis',[{'matches':[],'differs':[]},
                                  {'matches':['no_misu'],'differs':['concentrated']}])
 def test_exact_basis_including_empty_accepted(client,cls,basis):
-    facts=deepcopy(FACTS);facts['investment_style']='안정추구형';facts['style_comparison_basis']=basis
+    facts=deepcopy(FACTS);facts['investment_style']='안정추구형';facts['style_comparison_basis']=weighted_basis(basis)
     comparison={field:[{'code':code,'text':'안정추구형과 비교하면 0건이었어요.'} for code in values]
                 for field,values in basis.items()}
     gen,call=adapter(cls,BODY|{'style_comparison':comparison})
@@ -358,7 +362,7 @@ def test_comparison_praise_rejected(text):
 def test_basis_prompt_no_reclassification_or_arithmetic():
     rules=build_pattern_brief_prompt(PatternBriefRequest(facts=deepcopy(FACTS))).split('\n\n',1)[0]
     for phrase in ('성향 비교는 분류하지','같은 순서로 {code, text}', '빈 목록은 그대로',
-                   '해당 투자 성향의 일반적 의미','근거 숫자 1개 이상', '직접 뺄셈하지',
+                   '성향의 일반적 의미나 설명을 문장마다 반복하지','근거 숫자 1개 이상', '직접 뺄셈하지',
                    'breakeven이 0이면 본전을 언급하지', '원가를 알 수 없는 매도 N건은 손익에서 제외했어요'):
         assert phrase in rules
 
@@ -372,3 +376,87 @@ def test_basis_prompt_no_reclassification_or_arithmetic():
 ])
 def test_new_basis_and_counts_validation(change):
     with pytest.raises(ValidationError):PatternBriefRequest(facts=FACTS|change)
+
+
+@pytest.mark.parametrize('code',['uses_misu','concentrated','day_trading','market_heavy','opening_heavy',
+                                'no_misu','diversified','patient_hold','limit_used','spread_timing'])
+def test_all_catalog_codes_in_input_and_output(code):
+    from app.pattern_schemas import BehaviorStrength, ComparisonItem
+    assert BehaviorStrength(code=code,strength='55.50').strength==55.5
+    assert ComparisonItem(code=code,text='비중 50%인 편이에요.').code==code
+
+
+@pytest.mark.parametrize('change',[
+    {'code':'invented','strength':10}, {'code':'no_misu','strength':-1},
+    {'code':'no_misu','strength':101}, {'code':'no_misu','strength':'NaN'},
+])
+def test_strength_and_code_contract(change):
+    from app.pattern_schemas import BehaviorStrength
+    with pytest.raises(ValidationError):BehaviorStrength.model_validate(change)
+
+
+def test_prompt_normalizes_all_decimal_values_without_touching_names():
+    facts=deepcopy(FACTS)
+    facts['holding']={'matched_sell_orders':0,'matched_sell_quantity':1,'unmatched_sell_quantity':0,'avg_holding_days':'5.50','same_day_ratio_pct':'0.00'}
+    facts['pattern_highlights']=[{'code':'market_heavy','strength':'87.50'}]
+    facts['concentration']['top_symbols'][0]['name']='6000'
+    rules,data=build_pattern_brief_prompt(PatternBriefRequest(facts=facts)).split('\n\n',1)
+    parsed=json.loads(data)
+    assert parsed['holding']['avg_holding_days']=='5.5'
+    assert parsed['holding']['same_day_ratio_pct']=='0'
+    assert parsed['pattern_highlights'][0]['strength']=='87.5'
+    assert parsed['concentration']['top_symbols'][0]['name']=='6000'
+    assert 'strength는 정렬용 내부 값' in rules
+    for text in ('pattern_highlights 순서를 우선','evidence 한 문장에 숫자는 최대 2개',
+                 'no_misu / spread_timing','모두 이익 또는 모두 손실','mild 항목은'):
+        assert text in rules
+
+
+@pytest.mark.parametrize('code',['patient_hold','spread_timing','market_heavy','limit_used'])
+def test_new_code_basis_mismatch_is_502(client,code):
+    facts=deepcopy(FACTS);facts['investment_style']='안정추구형'
+    facts['style_comparison_basis']=weighted_basis({'matches':[code],'differs':[]})
+    gen,call=adapter(GeminiPatternBriefGenerator,BODY|{'style_comparison':{'matches':[],'differs':[]}})
+    main.app.dependency_overrides[main.get_pattern_brief_generator]=lambda:gen
+    assert client.post('/brief/pattern',json={'facts':facts}).status_code==502
+    call.assert_called_once()
+
+
+def test_prompt_dedup_holding_fallback_misu_count_and_absence_language():
+    rules=build_pattern_brief_prompt(PatternBriefRequest(facts=deepcopy(FACTS))).split('\n\n',1)[0]
+    for phrase in ('pattern_highlights 순서를 우선','highlights가 2개 미만이면 보유 기간',
+                   '성향 비교에 나온 내용을 거래 습관에서 반복하지',
+                   'uses_misu는 비율이 아니라 건수로만','미수 주문 3건',
+                   'no_misu와 spread_timing은 숫자 0·0% 없이 자연어로만',
+                   'strength에서 비율을 만들지'):
+        assert phrase in rules
+
+
+@pytest.mark.parametrize('field,value',[
+ ('data_confidence','unknown'), ('data_confidence','preliminary'),
+ ('holding', FACTS['holding']|{'matched_sell_orders':-1}),
+ ('holding', FACTS['holding']|{'matched_sell_orders':'1.5'}),
+ ('holding', FACTS['holding']|{'matched_sell_orders':'NaN'}),
+])
+def test_confidence_and_matched_order_contract(field,value):
+    with pytest.raises(ValidationError):PatternBriefRequest(facts=FACTS|{field:value})
+
+
+def test_preliminary_basis_limit_and_low_sample_narrative_rules():
+    facts=deepcopy(FACTS);facts['counts']={'buy_filled':3,'sell_filled':3,'symbols_traded':2}
+    facts['data_confidence']='preliminary';facts['investment_style']='안정추구형'
+    facts['style_comparison_basis']=weighted_basis({'matches':[],'differs':['uses_misu','concentrated']})
+    with pytest.raises(ValidationError):PatternBriefRequest(facts=facts)
+    facts['style_comparison_basis']=weighted_basis({'matches':[],'differs':['uses_misu']})
+    rules=build_pattern_brief_prompt(PatternBriefRequest(facts=facts)).split('\n\n',1)[0]
+    for text in ('아직 거래가 적어','잠정 문구','headline에 한 번',
+                 '성향의 일반적 의미나 설명을 문장마다 반복하지', 'headline은 건수 나열 대신',
+                 'highlights에 없는 집중','matched_sell_orders 3건 이상'):
+        assert text in rules
+
+@pytest.mark.parametrize('confidence,count,ok',[('preliminary',3,True),('moderate',10,False),('sufficient',30,False)])
+def test_one_observation_depends_on_confidence(client,confidence,count,ok):
+    facts=deepcopy(FACTS);facts['counts']['buy_filled']=count;facts['counts']['sell_filled']=0;facts['data_confidence']=confidence
+    gen,_=adapter(GeminiPatternBriefGenerator,BODY|{'observed_patterns':BODY['observed_patterns'][:1]})
+    main.app.dependency_overrides[main.get_pattern_brief_generator]=lambda:gen
+    assert client.post('/brief/pattern',json={'facts':facts}).status_code==(200 if ok else 502)
