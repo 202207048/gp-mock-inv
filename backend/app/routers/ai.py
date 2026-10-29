@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.schemas.pattern_brief import PatternFacts, PatternBrief, PatternPublicResponse, PatternGenerateRequest, PatternInsufficient
+from app.schemas.pattern_brief import PatternFacts, PatternBrief, PatternPublicResponse, attach_comparison_notes, PatternGenerateRequest, PatternInsufficient
 from app.services.pattern_brief_service import build_pattern_facts
 from app.services.pattern_brief_client import PatternBriefUnavailable, request_pattern_brief
 
@@ -576,7 +576,8 @@ async def pattern_brief(body: PatternGenerateRequest, request: Request, response
         raise HTTPException(exc.status_code, detail=str(exc), headers={"X-Trace-ID":str(trace_id)}) from None
     request.state.ai_execution = result.ai
     return PatternPublicResponse.model_validate({
-        **result.brief(), "style_tags": facts.style_tags, "data_confidence": facts.data_confidence,
+        **result.brief(), "style_comparison": attach_comparison_notes(result.brief()["style_comparison"]),
+        "style_tags": facts.style_tags, "data_confidence": facts.data_confidence,
         "filled_count": int(facts.counts.buy_filled + facts.counts.sell_filled),
         "investment_style_description": facts.investment_style_description,
     })

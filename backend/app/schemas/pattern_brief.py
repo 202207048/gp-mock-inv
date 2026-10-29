@@ -232,7 +232,51 @@ class PatternInsufficient(Schema):
     filled_count: int
 
 
+COMPARISON_NOTES: dict[ComparisonCode, dict[str, str]] = {
+    "uses_misu": {"reason":"미수는 가진 현금보다 큰 금액을 매수하는 방식이라 손익 폭이 커지고, 정해진 기한 안에 갚지 못하면 반대매매가 될 수 있어요.", "option":"보유 현금 안에서만 주문하면 손실을 투자한 금액 안으로 묶을 수 있어요."},
+    "concentrated": {"reason":"한 종목 비중이 크면 그 종목의 등락이 전체 수익률을 대부분 좌우해요.", "option":"매수 금액을 여러 종목에 나누면 한 종목의 변동이 전체에 주는 영향이 줄어요."},
+    "day_trading": {"reason":"같은 날 사고파는 거래는 짧은 시간의 가격 변동에 결과가 크게 좌우돼요.", "option":"매수 전에 보유 기간을 정해 두면 짧은 변동에 덜 흔들릴 수 있어요."},
+    "market_heavy": {"reason":"시장가 주문은 바로 체결되지만 체결 가격을 미리 정할 수 없어요.", "option":"지정가 주문을 쓰면 원하는 가격을 정해 두고 체결을 기다릴 수 있어요."},
+    "opening_heavy": {"reason":"장 시작 직후에는 밤사이 쌓인 주문이 한꺼번에 몰려 하루 중 가격 변동이 큰 편이에요.", "option":"시초가가 자리 잡은 뒤 주문하면 급한 가격 변동을 피할 수 있어요."},
+    "no_misu": {"reason":"현금 안에서만 거래하면 손실이 투자한 금액을 넘지 않아요."},
+    "diversified": {"reason":"여러 종목에 나눠 사면 한 종목의 급등락이 전체 수익률에 주는 영향이 줄어요."},
+    "patient_hold": {"reason":"보유 기간이 길면 짧은 가격 변동에 따라 사고파는 일이 줄어요."},
+    "limit_used": {"reason":"지정가 주문은 체결 가격을 미리 정해 두기 때문에 예상보다 비싸게 사는 일을 줄일 수 있어요."},
+    "spread_timing": {"reason":"주문 시간이 하루 중 고르게 나뉘면 장 초반의 큰 가격 변동에 덜 영향을 받아요."},
+}
+
+
+class ComparisonNote(Schema):
+    reason: SummaryText
+    option: SummaryText | None
+
+
+class PublicComparisonItem(ComparisonItem):
+    note: ComparisonNote | None
+
+
+class PublicStyleComparison(Schema):
+    matches: list[PublicComparisonItem] = Field(max_length=3)
+    differs: list[PublicComparisonItem] = Field(max_length=3)
+
+
+def attach_comparison_notes(comparison: dict | None) -> dict | None:
+    if comparison is None:
+        return None
+    result = {}
+    for field in ("matches", "differs"):
+        result[field] = []
+        for item in comparison[field]:
+            fixed = COMPARISON_NOTES.get(item["code"])
+            note = None if fixed is None else {
+                "reason": fixed["reason"], "option": fixed.get("option") if field == "differs" else None,
+            }
+            result[field].append({**item, "note": note})
+    return result
+
+
 class PatternPublicResponse(PatternBrief):
+    style_comparison: PublicStyleComparison | None
     data_confidence: DataConfidence
     filled_count: int = Field(strict=True, ge=0)
     investment_style_description: str | None = Field(max_length=200)

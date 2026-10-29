@@ -444,3 +444,40 @@ class PatternTests(unittest.TestCase):
             with self.Session() as db:
                 db.query(User).filter(User.user_id==1).update({User.investment_style:style});db.commit()
             self.assertEqual(self.facts().investment_style_description,INVESTMENT_STYLE_DESCRIPTIONS.get(style))
+
+    def test_fixed_notes_catalog_and_language(self):
+        from typing import get_args
+        import re
+        from app.schemas.pattern_brief import COMPARISON_NOTES,ComparisonCode,COMPARISON_DIRECTIVES,PROHIBITED_LANGUAGE_PATTERNS
+        self.assertEqual(set(COMPARISON_NOTES),set(get_args(ComparisonCode)))
+        self.assertEqual(sum('option' in v for v in COMPARISON_NOTES.values()),5)
+        for value in COMPARISON_NOTES.values():
+            self.assertTrue(value['reason'])
+            for text in value.values():
+                self.assertFalse(any(re.search(p,text) for p in PROHIBITED_LANGUAGE_PATTERNS))
+                self.assertFalse(any(p in text for p in COMPARISON_DIRECTIVES))
+
+    def test_public_notes_direction_and_null(self):
+        from app.schemas.pattern_brief import attach_comparison_notes,COMPARISON_NOTES
+        self.assertIsNone(attach_comparison_notes(None))
+        items=[{'code':code,'text':'관찰했어요.'} for code in COMPARISON_NOTES]
+        result=attach_comparison_notes({'matches':items,'differs':items})
+        self.assertTrue(all(x['note']['option'] is None for x in result['matches']))
+        for item in result['differs']:
+            self.assertEqual(item['note'],{'reason':COMPARISON_NOTES[item['code']]['reason'],'option':COMPARISON_NOTES[item['code']].get('option')})
+        self.assertNotIn('note',items[0])
+        self.assertIsNone(attach_comparison_notes({'matches':[],'differs':[{'code':'unknown','text':'관찰'}]})['differs'][0]['note'])
+
+    def test_notes_are_added_only_to_public_route(self):
+        from app.schemas.pattern_brief import COMPARISON_NOTES
+        comparison={'matches':[{'code':'uses_misu','text':'미수 주문 1건이었어요.'}],
+                    'differs':[{'code':'concentrated','text':'비중 75%였어요.'}]}
+        fake=SimpleNamespace(ai=None,brief=lambda:BODY|{'style_comparison':comparison})
+        with patch.object(routes,'request_pattern_brief',AsyncMock(return_value=fake)):
+            response=self.client.post('/api/ai/pattern',json={'account_id':1})
+        self.assertEqual(response.status_code,200,response.text)
+        public=response.json()['style_comparison']
+        self.assertIsNone(public['matches'][0]['note']['option'])
+        self.assertEqual(public['differs'][0]['note']['option'],COMPARISON_NOTES['concentrated']['option'])
+        self.assertNotIn('note',comparison['matches'][0])
+        self.assertNotIn('note',self.client.get('/api/ai/pattern/facts?account_id=1').text)
