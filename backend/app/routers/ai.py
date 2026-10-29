@@ -23,6 +23,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.schemas.news_analysis import NewsAnalysisRequest, NewsAnalysisResponse
+from app.services.news_analysis_service import analyze_news, NewsAnalysisUnavailable
 from app.config import settings
 from app.services.ai_service_auth import AIServiceNotConfigured, service_headers
 from app.database import get_db
@@ -551,3 +553,11 @@ async def portfolio_brief(
     return PortfolioBriefResponse(
         symbol_code=facts.symbol_code, security_name=facts.security_name, **result.brief(),
     )
+
+
+@router.post("/news-analysis", response_model=NewsAnalysisResponse)
+async def news_analysis(body: NewsAnalysisRequest, user: User = Depends(get_current_user)):
+    try:
+        return await analyze_news(body)
+    except NewsAnalysisUnavailable as exc:
+        raise HTTPException(exc.status_code, detail=str(exc)) from None
