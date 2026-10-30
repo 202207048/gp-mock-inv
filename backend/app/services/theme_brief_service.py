@@ -15,6 +15,7 @@ from app.services.theme_service import fetch_snapshot, KST
 
 logger=logging.getLogger(__name__)
 GENERIC_TITLES=('오늘의 메모','다이제스트','프리미엄9','보호예수 해제')
+SPECULATIVE_TITLES=('?','？','전망','기대','예상','목표가','주목')
 
 
 def news_time(value,now):
@@ -40,6 +41,7 @@ def recent_headlines(rows,now,*,market=False):
             if at is None or at>now or at.date() not in (now.date(),previous):continue
             title=' '.join(row['title'].split())
             if not title or any(pattern.replace(' ','') in title.replace(' ','') for pattern in GENERIC_TITLES):continue
+            if any(marker in title for marker in SPECULATIVE_TITLES):continue
             evidence=Evidence(title=title,source=row.get('source'),url=row.get('url'),published_at=at)
             priority=0 if at.date()==now.date() else 1 if at.date()==previous else 2
             valid.append((priority,at,evidence))

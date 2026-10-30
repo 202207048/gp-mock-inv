@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 import httpx
 from app.schemas.theme_brief import Theme, Leader, ThemePublicResponse
+MIN_THEME_MOVE_RATE=Decimal("1.0")
 KST=timezone(timedelta(hours=9))
 URL="https://m.stock.naver.com/api/stocks/theme"
 
@@ -21,8 +22,8 @@ def select_themes(groups):
             rise_count=int(g['riseCount']),fall_count=int(g['fallCount']),steady_count=int(g['steadyCount']),
             total_count=int(g['totalCount']),leaders=[])
         if theme.total_count>=5:themes.append(theme)
-    rising=sorted((t for t in themes if t.change_rate>0 and t.rise_count>t.fall_count),key=lambda t:(-t.change_rate,t.id))[:3]
-    falling=sorted((t for t in themes if t.change_rate<0 and t.fall_count>t.rise_count),key=lambda t:(t.change_rate,t.id))[:3]
+    rising=sorted((t for t in themes if t.change_rate>=MIN_THEME_MOVE_RATE and t.rise_count>t.fall_count),key=lambda t:(-t.change_rate,t.id))[:3]
+    falling=sorted((t for t in themes if t.change_rate<=-MIN_THEME_MOVE_RATE and t.fall_count>t.rise_count),key=lambda t:(t.change_rate,t.id))[:3]
     return rising,falling
 
 

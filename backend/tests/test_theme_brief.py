@@ -23,6 +23,20 @@ class SelectionTests(TestCase):
   rising,falling=select_themes([group('security',4.92,3,18,21),group('small',8,3,0,4),group('zero',0)]+[group(str(i),i+1) for i in range(5)]+[group('f'+str(i),-i-1,2,8) for i in range(5)])
   self.assertEqual([r.id for r in rising],['4','3','2']);self.assertEqual([r.id for r in falling],['f4','f3','f2'])
   self.assertEqual(select_themes([]),([],[]))
+ def test_move_threshold_boundaries(self):
+  rising,falling=select_themes([group('below','0.99'),group('up','1.0'),
+   group('negative_below','-0.99',2,8),group('down','-1.0',2,8)])
+  self.assertEqual([t.id for t in rising],['up'])
+  self.assertEqual([t.id for t in falling],['down'])
+  self.assertEqual(select_themes([group('quiet','0.36')]),([],[]))
+ def test_speculative_titles_excluded_from_stock_and_market(self):
+  now=datetime(2026,10,30,15,tzinfo=KST)
+  titles=['해운주 상승?','해운주 상승？','반도체 전망','실적 기대','증시 예상',
+   '목표가 상향','코스피 주목','코스피 급락에 반도체 약세']
+  rows=[dict(title=title,date='2026.10.30 14:00') for title in titles]
+  for market in (False,True):
+   with self.subTest(market=market):
+    self.assertEqual([h.title for h in recent_headlines(rows,now,market=market)],[titles[-1]])
  def test_leaders_and_decimal(self):
   stocks=[dict(itemCode=str(i),stockName='가상',closePrice='1,913',fluctuationsRatio=str(i-2)) for i in range(5)]
   self.assertEqual([x.code for x in select_leaders(stocks,'rising')],['4','3','2'])

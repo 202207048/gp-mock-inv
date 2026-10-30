@@ -77,3 +77,15 @@ def test_paraphrase_market_citation_and_rounding():
  assert validate_theme_output(output('코스피가 4% 하락한 가운데 반도체도 약세였어요.',['m-1']),request).themes[0].reason
  assert validate_theme_output(output('코스피가 99% 하락했어요.',['m-1']),request).themes[0].reason is None
  assert validate_theme_output(output('공급계약 소식과 함께 움직였어요.'),request).themes[0].reason
+
+
+@pytest.mark.parametrize('reason',['실적 개선 기대 소식이 있어요.','업황 개선 전망 소식이 있어요.'])
+def test_speculative_reason_degrades_to_null(reason):
+ assert validate_theme_output(output(reason),ThemeBriefRequest(**DATA)).themes[0].reason is None
+
+
+def test_prompt_avoids_card_numbers_but_allows_news_context_numbers():
+ prompt=build_theme_prompt(ThemeBriefRequest(**DATA))
+ assert '화면에 따로 표시되므로 문장에 반복하지 말고' in prompt
+ assert '기사에서 읽히는 소식과 맥락에 집중' in prompt
+ assert '맥락에 필요한 숫자는 사용할 수' in prompt
