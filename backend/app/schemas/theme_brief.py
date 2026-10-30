@@ -56,11 +56,12 @@ class ThemeReason(Schema):
 class ThemeBriefResponse(Schema):
     themes: list[ThemeReason]
 
+# 화면용 응답은 JSON 숫자로 내려준다. (Decimal은 문자열로 직렬화된다)
 class Leader(Schema):
     code: str
     name: str
-    price: Number
-    change_rate: Number
+    price: int
+    change_rate: float
 class Evidence(Schema):
     title: str
     source: str | None
@@ -69,7 +70,7 @@ class Evidence(Schema):
 class Theme(Schema):
     id: str
     name: str
-    change_rate: Number
+    change_rate: float
     rise_count: Count
     fall_count: Count
     steady_count: Count

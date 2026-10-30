@@ -153,3 +153,13 @@ class MarketCollectionTests(IsolatedAsyncioTestCase):
    context,_=await collect_market_context(now,as_of)
   self.assertEqual([h.title for h in context.headlines],['코스피 급락 마감'])
   latest.assert_not_awaited();dated.assert_awaited_once_with(as_of.date())
+
+
+class PublicJsonTypeTests(TestCase):
+ def test_numbers_are_json_numbers(self):
+  from decimal import Decimal
+  from app.services.theme_service import select_leaders
+  data=snapshot().model_dump(mode='json')
+  self.assertIsInstance(data['rising'][0]['change_rate'],float)
+  leader=select_leaders([{'itemCode':'353200','stockName':'가상전자','closePrice':'116,400','fluctuationsRatio':'-15.77'}],'falling')[0].model_dump(mode='json')
+  self.assertEqual((leader['price'],leader['change_rate']),(116400,-15.77))
