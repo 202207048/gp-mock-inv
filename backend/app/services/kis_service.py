@@ -16,6 +16,9 @@ services/kis_service.py - 한국투자증권 오픈API 연동 서비스
 
 import asyncio
 import math
+from time import monotonic
+from weakref import WeakKeyDictionary
+from copy import deepcopy
 from datetime import datetime, timedelta
 
 import httpx
@@ -25,6 +28,52 @@ from app.config import settings
 # ── 도메인 상수 ──────────────────────────────────────────────
 KIS_MOCK_URL = "https://openapivts.koreainvestment.com:29443"   # 모의투자
 KIS_REAL_URL = "https://openapi.koreainvestment.com:9443"       # 실전투자
+
+# 한 worker의 이벤트 루프에서 모든 모의 REST 시작을 직렬화한다.
+_loop_states = WeakKeyDictionary()
+
+
+class _MockState:
+    def __init__(self):
+        self.lock = asyncio.Lock()
+        self.token_lock = asyncio.Lock()
+        self.last_start = None
+        self.prices = {}
+        self.inflight = {}
+
+
+def _mock_state():
+    loop = asyncio.get_running_loop()
+    if loop not in _loop_states:
+        _loop_states[loop] = _MockState()
+    return _loop_states[loop]
+
+
+async def mock_request(client, method, url, **kwargs):
+    """모의 REST만 제한하며 EGW00201 응답에 한해 한 번 재시도한다."""
+    if not str(url).startswith(KIS_MOCK_URL + "/"):
+        return await getattr(client, method)(url, **kwargs)
+    state = _mock_state()
+    for attempt in range(2):
+        async with state.lock:
+            interval = settings.KIS_MIN_INTERVAL_MS / 1000
+            if state.last_start is not None:
+                await asyncio.sleep(max(0, interval - (monotonic() - state.last_start)))
+            state.last_start = monotonic()
+            # 시작 간격만 잠그고 응답을 기다리는 동안 다른 요청의 시작을 허용한다.
+            task = asyncio.create_task(getattr(client, method)(url, **kwargs))
+            await asyncio.sleep(0)
+        response = await task
+        try:
+            data = response.json()
+        except (ValueError, TypeError):
+            return response
+        limited = isinstance(data, dict) and data.get("msg_cd") == "EGW00201"
+        if not limited:
+            return response
+        if attempt:
+            return response  # 최종 오류 매핑은 기존 호출자의 정책을 유지한다.
+
 
 # ── 토큰 캐시 (모의·실전 분리) ───────────────────────────────
 _mock_token_cache: dict = {}
@@ -52,6 +101,11 @@ def _assert_read_only(tr_id: str) -> None:
 # ── 모의투자 토큰 ─────────────────────────────────────────────
 
 async def get_kis_token() -> str:
+    async with _mock_state().token_lock:
+        return await _load_kis_token()
+
+
+async def _load_kis_token() -> str:
     """
     모의투자 API 토큰을 반환한다.
     유효하면 캐시된 토큰을 재사용하고, 만료됐으면 새로 발급한다.
@@ -66,7 +120,7 @@ async def get_kis_token() -> str:
 
     # 모의투자 서버는 SSL 인증서 호스트명 불일치 문제가 있어 verify=False 유지
     async with httpx.AsyncClient(verify=False) as client:
-        resp = await client.post(
+        resp = await mock_request(client, "post",
             f"{KIS_MOCK_URL}/oauth2/tokenP",
             json={
                 "grant_type": "client_credentials",
@@ -117,6 +171,26 @@ async def get_real_kis_token() -> str:
 # ── 현재가 조회 (모의투자 키) ─────────────────────────────────
 
 async def get_current_price(symbol_code: str, timeout: float = 5.0) -> dict:
+    state = _mock_state()
+    cached = state.prices.get(symbol_code)
+    if cached and monotonic() < cached[0]:
+        return deepcopy(cached[1])
+    if symbol_code not in state.inflight:
+        async def load():
+            try:
+                value = await _fetch_current_price(symbol_code, timeout)
+                if value.get("current_price", 0) > 0:
+                    state.prices[symbol_code] = (monotonic() + 10, deepcopy(value))
+                return value
+            finally:
+                state.inflight.pop(symbol_code, None)
+        task = asyncio.create_task(load())
+        task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+        state.inflight[symbol_code] = task
+    return deepcopy(await asyncio.shield(state.inflight[symbol_code]))
+
+
+async def _fetch_current_price(symbol_code: str, timeout: float = 5.0) -> dict:
     """
     국내 주식 현재가를 조회한다.
 
@@ -144,7 +218,7 @@ async def get_current_price(symbol_code: str, timeout: float = 5.0) -> dict:
     token = await get_kis_token()
 
     async with httpx.AsyncClient(verify=False, timeout=timeout) as client:
-        resp = await client.get(
+        resp = await mock_request(client, "get",
             f"{KIS_MOCK_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
             headers={
                 "authorization": f"Bearer {token}",
@@ -159,9 +233,12 @@ async def get_current_price(symbol_code: str, timeout: float = 5.0) -> dict:
             },
         )
         if resp.status_code >= 400:
-            print(f"[KIS 현재가 오류] status={resp.status_code} body={resp.text}")
+            print(f"[KIS 현재가 오류] status={resp.status_code}")
         resp.raise_for_status()
-        output = resp.json().get("output", {})
+        data = resp.json()
+        if str(data.get("rt_cd", "0")) != "0":
+            raise ValueError("KIS price unavailable")
+        output = data.get("output", {})
 
     return {
         "symbol_code": symbol_code,
@@ -189,7 +266,7 @@ async def get_listed_stock(symbol_code: str) -> dict | None:
     try:
         token = await get_kis_token()
         async with httpx.AsyncClient(verify=False, timeout=10) as client:
-            resp = await client.get(
+            resp = await mock_request(client, "get",
                 f"{KIS_MOCK_URL}/uapi/domestic-stock/v1/quotations/inquire-price",
                 headers={
                     "authorization": f"Bearer {token}",
@@ -299,7 +376,7 @@ async def get_stock_chart(symbol_code: str, period: str = "D") -> list[dict]:
     token = await get_kis_token()
 
     async with httpx.AsyncClient(verify=False) as client:
-        resp = await client.get(
+        resp = await mock_request(client, "get",
             f"{KIS_MOCK_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-price",
             headers={
                 "authorization": f"Bearer {token}",

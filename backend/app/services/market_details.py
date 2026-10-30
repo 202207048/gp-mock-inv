@@ -69,7 +69,7 @@ async def get_market_details(symbol_code, kind):
     try:
         token = await kis.get_kis_token()
         async with httpx.AsyncClient(verify=False, timeout=10) as client:
-            response = await client.get(
+            response = await kis.mock_request(client, "get",
                 f'{kis.KIS_MOCK_URL}/uapi/domestic-stock/v1/quotations/{endpoint}',
                 headers={'authorization': f'Bearer {token}', 'appkey': kis.settings.KIS_APP_KEY,
                          'appsecret': kis.settings.KIS_APP_SECRET, 'tr_id': tr_id, 'custtype': 'P'},

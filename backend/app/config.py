@@ -39,6 +39,7 @@ class Settings(BaseSettings):
 
     # 한국투자증권 오픈API — 모의투자 키 (시세·차트 조회용)
     # https://apiportal.koreainvestment.com 에서 발급
+    KIS_MIN_INTERVAL_MS: int = Field(default=500, gt=0)
     KIS_APP_KEY: str = ""
     KIS_APP_SECRET: str = ""
 
