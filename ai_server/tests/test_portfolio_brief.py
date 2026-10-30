@@ -256,7 +256,12 @@ def test_prompt_payload_is_exact_json_decimal_and_excludes_execution_control():
     before = request.model_dump(mode="json")
     prompt = build_portfolio_brief_prompt(request)
     instructions, serialized = prompt.split("\n\n", 1)
-    assert json.loads(serialized) == {k: v for k, v in before.items() if k not in {"profile", "include_ai_metadata"}}
+    expected = {k: deepcopy(v) for k, v in before.items() if k not in {"profile", "include_ai_metadata"}}
+    expected["holding"]["return_rate"] = "5.71"
+    expected["position"]["started_at"] = "2026년 10월 20일 10:00"
+    expected["trades"][0]["filled_at"] = "2026년 10월 20일 10:00"
+    expected["trades"][1]["filled_at"] = "2026년 10월 21일 10:00"
+    assert json.loads(serialized) == expected
     assert '"avg_price": "70000"' in serialized
     assert request.model_dump(mode="json") == before
     assert "현재 보유상태" in instructions and "정확한 십진수 문자열" in instructions
@@ -701,3 +706,80 @@ def test_entry_context_profile_endpoint_keeps_model_and_metadata(api,monkeypatch
     assert response.json()["ai"]["profile_id"] == profile
     assert response.json()["model"] == MODELS[profile][0]
     assert len(calls)==1 and calls[0].call_count==1
+
+
+@pytest.mark.parametrize("rate, expected", [
+    ("-13.68498708963482109922537809", "-13.68"),
+    ("12.34567890123456789012345678", "12.35"),
+    ("0", "0"), ("-0.0001", "0"), (None, None),
+    ("1.005", "1.01"), ("-1.005", "-1.01"),
+])
+def test_prompt_percentage_precision_without_changing_financial_contract(rate, expected):
+    data = body()
+    data["holding"].update(return_rate=rate, avg_price="271100", current_price="2340000",
+                           unrealized_pnl="20689000.1234567890123456789")
+    request = PortfolioBriefRequest(**data)
+    before = request.model_dump(mode="json")
+    prompt = build_portfolio_brief_prompt(request)
+    payload = json.loads(prompt.split("\n\n", 1)[1])
+    assert payload["holding"]["return_rate"] == expected
+    assert payload["holding"]["avg_price"] == "271100"
+    assert payload["holding"]["current_price"] == "2340000"
+    assert payload["holding"]["unrealized_pnl"] == before["holding"]["unrealized_pnl"]
+    assert payload["holding"]["quantity"] == 10
+    assert request.model_dump(mode="json") == before
+    if rate is not None and len(rate) > 10:
+        assert rate not in prompt
+
+
+def test_prompt_missing_percentage_remains_unknown():
+    data = body()
+    del data["holding"]["return_rate"]
+    request = PortfolioBriefRequest(**data)
+    payload = json.loads(build_portfolio_brief_prompt(request).split("\n\n", 1)[1])
+    assert payload["holding"]["return_rate"] is None
+
+
+@pytest.mark.parametrize("adapter_type", ADAPTERS)
+def test_provider_receives_normalized_prompt_for_all_percentage_fields(adapter_type):
+    entry = deepcopy(ENTRY)
+    entry.update(return_5_sessions="12.3456789", return_20_sessions="-13.68498708963482109922537809")
+    request = PortfolioBriefRequest(**body(entry_price_context=entry))
+    before = request.model_dump(mode="json")
+    adapter, call = fake_adapter(adapter_type)
+    adapter.generate(request)
+    kwargs = call.call_args.kwargs
+    prompt = kwargs["input"] if adapter_type is OpenAIPortfolioBriefGenerator else kwargs["contents"]
+    payload = json.loads(prompt.split("\n\n", 1)[1])
+    assert payload["holding"]["return_rate"] == "5.71"
+    assert payload["entry_price_context"]["return_5_sessions"] == "12.35"
+    assert payload["entry_price_context"]["return_20_sessions"] == "-13.68"
+    assert payload["entry_price_context"]["opening_vs_prior_close_pct"] == "0.29"
+    assert payload["entry_price_context"]["prior_close"] == "69800"
+    assert request.model_dump(mode="json") == before
+
+
+@pytest.mark.parametrize('value,expected',[
+ ('2026-10-01T00:01:00+00:00','2026년 10월 1일 09:01'),
+ ('2026-10-01T15:30:00+00:00','2026년 10월 2일 00:30'),
+ ('2026-10-01T00:01:00','2026년 10월 1일 09:01'),
+ (None,None)])
+def test_prompt_datetime_kst(value,expected):
+    from datetime import datetime
+    from app.summarizers.portfolio import _prompt_datetime
+    assert _prompt_datetime(datetime.fromisoformat(value) if value else None)==expected
+
+
+def test_prompt_dates_converted_without_mutation():
+    import re
+    from datetime import date
+    from app.summarizers.portfolio import _prompt_datetime
+    request=PortfolioBriefRequest.model_validate(REQUEST)
+    before=request.model_dump()
+    prompt=build_portfolio_brief_prompt(request)
+    payload=json.loads(prompt.split('\n\n',1)[1])
+    assert payload['position']['started_at']=='2026년 10월 20일 10:00'
+    assert payload['trades'][0]['filled_at']=='2026년 10월 20일 10:00'
+    assert not re.search(r'\d{4}-\d{2}-\d{2}T|\+00:00',json.dumps(payload))
+    assert _prompt_datetime(date(2026,9,30))=='2026년 9월 30일'
+    assert request.model_dump()==before
