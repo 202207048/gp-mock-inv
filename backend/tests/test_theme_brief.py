@@ -16,7 +16,7 @@ import httpx
 def group(i,rate=2,rise=8,fall=2,total=10):return dict(no=i,name='가상테마',changeRate=str(rate),riseCount=rise,fallCount=fall,steadyCount=0,totalCount=total)
 def snapshot():return ThemePublicResponse(as_of=datetime.now(KST),generated_at=datetime.now(KST),rising=[Theme(id='1',name='가상테마',change_rate=2,rise_count=8,fall_count=2,steady_count=0,total_count=10,leaders=[Leader(code='000001',name='가상전자',price=100,change_rate=3)])],falling=[])
 def evidence():return [Evidence(title='가상전자 공급계약 체결',source='가상신문',url='https://example.invalid/news',published_at=datetime.now(KST))]
-def generated():return {'themes':[{'id':'1','reason':'가상전자 공급계약 체결 소식이 있어요.','headline_ids':['0']}], 'provider':'private','usage':{}}
+def generated():return {'themes':[{'id':'1','reason':'가상전자 공급계약 체결 소식이 있어요.','headline_ids':['t1-0']}], 'provider':'private','usage':{}}
 
 class SelectionTests(TestCase):
  def test_selection_majority_size_and_limits(self):
@@ -45,7 +45,8 @@ class ServiceTests(IsolatedAsyncioTestCase):
  async def asyncSetUp(self):
   self.now=0;self.fetch=AsyncMock(side_effect=lambda:snapshot());self.collect=AsyncMock(side_effect=lambda *a:evidence())
   self.generate=AsyncMock(side_effect=lambda *a:generated())
-  self.service=ThemeBriefService(self.fetch,self.collect,self.generate,lambda:self.now)
+  self.market=AsyncMock(return_value=(__import__('app.schemas.theme_brief',fromlist=['MarketContext']).MarketContext(),{}))
+  self.service=ThemeBriefService(self.fetch,self.collect,self.generate,lambda:self.now,market=self.market)
  async def test_concurrent_cache_and_expiry(self):
   values=await asyncio.gather(*(self.service.get() for _ in range(10)))
   self.generate.assert_awaited_once();self.assertTrue(values[0].rising[0].reason)
@@ -88,3 +89,38 @@ class ServiceTests(IsolatedAsyncioTestCase):
   app=FastAPI();app.include_router(router,prefix='/api/ai');app.dependency_overrides[get_current_user]=lambda:object()
   with patch.object(global_service,'get',AsyncMock(return_value=snapshot())):
    with TestClient(app) as c:self.assertEqual(c.get('/api/ai/theme-brief').status_code,200)
+
+ async def test_market_only_context_and_diagnostics(self):
+  from app.schemas.theme_brief import MarketContext,Headline
+  e=evidence()[0]
+  self.market.return_value=(MarketContext(headlines=[Headline(id='m-0',title=e.title,source=e.source,published_at=e.published_at)]),{'m-0':e})
+  self.collect.side_effect=None;self.collect.return_value=[]
+  self.generate.side_effect=lambda req:{'themes':[{'id':'1','reason':'공급계약 소식과 함께 움직였어요.','headline_ids':['m-0']}]}
+  result=await self.service.get()
+  self.assertTrue(result.rising[0].reason);self.assertEqual(result.rising[0].evidence[0].title,e.title)
+  self.assertEqual(self.service.diagnostics['1'],'accepted')
+  self.assertNotIn('diagnostic',result.model_dump_json())
+
+class MarketContextTests(TestCase):
+ def test_today_previous_weekday_and_generic_filter(self):
+  now=datetime(2026,10,30,15,tzinfo=KST)
+  rows=[{'title':'오늘의 메모','date':'10분전'}, {'title':'다이제스트','date':'2026.10.30 14:00'},
+        {'title':'지난주','date':'2026.10.28 14:00'}, {'title':'어제 기사','date':'2026.10.29 14:00'},
+        {'title':'오늘 기사','date':'5분전'}]
+  self.assertEqual([e.title for e in recent_headlines(rows,now)],['오늘 기사','어제 기사'])
+
+
+class MarketCollectionTests(IsolatedAsyncioTestCase):
+ async def test_market_indices_partial_failure_and_today_priority(self):
+  from app.services.theme_brief_service import collect_market_context
+  now=datetime(2026,10,30,15,tzinfo=KST)
+  rows=[{'title':'일반 재무 기사'+str(i),'date':'1분전'} for i in range(9)]
+  rows += [{'title':'코스피 4% 급락','date':'10분전'}, {'title':'보호예수해제','date':'2분전'}, {'title':'어제 코스닥','date':'2026.10.29 14:00'}]
+  with patch('app.services.theme_brief_service.get_index_price',AsyncMock(side_effect=[{'change_rate':-4.04},None])) as indices,patch('app.services.theme_brief_service.get_market_news',AsyncMock(return_value=rows)):
+   context,evidence=await collect_market_context(now)
+  self.assertEqual([i.name for i in context.indices],['코스피'])
+  self.assertEqual(indices.await_count,2)
+  self.assertEqual(context.headlines[0].title,'코스피 4% 급락')
+  self.assertEqual(len(context.headlines),8)
+  self.assertTrue(all(h.id.startswith('m-') and h.published_at.date()==now.date() for h in context.headlines))
+  self.assertFalse(any('보호예수' in h.title for h in context.headlines))

@@ -24,17 +24,30 @@ class ThemeInput(Schema):
     fall_count: Count
     total_count: Count
     leaders: list[LeaderInput] = Field(max_length=3)
-    headlines: list[Headline] = Field(min_length=1,max_length=8)
+    headlines: list[Headline] = Field(max_length=8)
     @model_validator(mode="after")
     def unique_headlines(self):
         if len({h.id for h in self.headlines}) != len(self.headlines):raise ValueError("Duplicate headline")
         return self
+class MarketIndex(Schema):
+    name: str
+    change_rate: Number
+class MarketContext(Schema):
+    indices: list[MarketIndex] = Field(default_factory=list,max_length=2)
+    headlines: list[Headline] = Field(default_factory=list,max_length=8)
+    @model_validator(mode="after")
+    def unique_ids(self):
+        if len({h.id for h in self.headlines})!=len(self.headlines):raise ValueError("Duplicate market id")
+        return self
 class ThemeBriefRequest(Schema):
     themes: list[ThemeInput] = Field(min_length=1,max_length=6)
     profile: Literal["luna"] = "luna"
+    market: MarketContext = Field(default_factory=MarketContext)
     @model_validator(mode="after")
     def unique_themes(self):
         if len({t.id for t in self.themes}) != len(self.themes):raise ValueError("Duplicate theme")
+        market_ids={h.id for h in self.market.headlines}
+        if any(market_ids & {h.id for h in t.headlines} for t in self.themes):raise ValueError("Ambiguous citation ids")
         return self
 class ThemeReason(Schema):
     id: str

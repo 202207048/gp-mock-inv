@@ -20,7 +20,7 @@ def output(reason='가상전자 공급계약 체결 소식이 있어요.',ids=No
 @pytest.mark.parametrize('change',[
  {'reason':'a'*81}, {'reason':'매수하세요 소식이 있어요.'}, {'reason':'실적이 증가할 것 소식이 있어요.'},
  {'headline_ids':['missing']}, {'headline_ids':[]}, {'headline_ids':['h1']*4},
- {'reason':'제목에 없는 금리 인하 소식이 있어요.'}, {'reason':None,'headline_ids':['h1']},
+ {'reason':'금리가 99% 하락했어요.'}, {'reason':None,'headline_ids':['h1']},
 ])
 def test_unsafe_item_degrades_to_null(change):
  d=output();d['themes'][0].update(change)
@@ -62,6 +62,18 @@ def test_service_auth_and_route(monkeypatch):
  finally:app.dependency_overrides.clear()
 
 
-def test_positive_order_news_is_not_a_falling_cause():
+def test_opposite_direction_is_prompt_rule_and_fake_can_abstain():
  data=deepcopy(DATA);data['themes'][0]['direction']='falling'
- assert validate_theme_output(output(),ThemeBriefRequest(**data)).themes[0].reason is None
+ request=ThemeBriefRequest(**data)
+ assert '방향이 반대' in build_theme_prompt(request)
+ assert validate_theme_output(output(None,[]),request).themes[0].reason is None
+
+
+def test_paraphrase_market_citation_and_rounding():
+ data=deepcopy(DATA)
+ data['market']={'indices':[{'name':'코스피','change_rate':'-4.04'}],
+ 'headlines':[{'id':'m-1','title':'코스피 4.04% 급락에 반도체 약세','source':'뉴스','published_at':'2026-10-30T09:00:00+09:00'}]}
+ request=ThemeBriefRequest(**data)
+ assert validate_theme_output(output('코스피가 4% 하락한 가운데 반도체도 약세였어요.',['m-1']),request).themes[0].reason
+ assert validate_theme_output(output('코스피가 99% 하락했어요.',['m-1']),request).themes[0].reason is None
+ assert validate_theme_output(output('공급계약 소식과 함께 움직였어요.'),request).themes[0].reason
