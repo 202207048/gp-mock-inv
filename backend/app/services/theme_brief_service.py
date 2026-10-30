@@ -8,7 +8,7 @@ import httpx
 from app.config import settings
 from app.schemas.theme_brief import ThemeBriefRequest, ThemeInput, Headline, LeaderInput, Evidence, MarketContext, MarketIndex
 from app.services.ai_service_auth import service_headers
-from app.services.news_service import get_news_by_symbol, get_market_news
+from app.services.news_service import get_news_by_symbol, get_market_news, parse_market_news, MARKET_NEWS_URL
 from app.services.kis_service import get_index_price
 from app.services.theme_service import fetch_snapshot, KST
 
@@ -31,19 +31,26 @@ def news_time(value,now):
     except ValueError:return None
 
 
-def recent_headlines(rows,now,*,market=False):
-    previous=now.date()-timedelta(days=1)
+def session_dates(now,anchor=None):
+    # 시세 기준 거래일로 기사 기간을 맞춘다. 주말에 장 마감 뒤 기사(해외 증시 등)가 섞이지 않게 한다.
+    session=(anchor or now).astimezone(KST).date()
+    previous=session-timedelta(days=1)
     while previous.weekday()>4:previous-=timedelta(days=1)
+    return session,previous
+
+
+def recent_headlines(rows,now,*,market=False,anchor=None):
+    session,previous=session_dates(now,anchor)
     valid=[]
     for row in rows:
         try:
             at=news_time(row.get('date'),now)
-            if at is None or at>now or at.date() not in (now.date(),previous):continue
+            if at is None or at>now or at.date() not in (session,previous):continue
             title=' '.join(row['title'].split())
             if not title or any(pattern.replace(' ','') in title.replace(' ','') for pattern in GENERIC_TITLES):continue
             if any(marker in title for marker in SPECULATIVE_TITLES):continue
             evidence=Evidence(title=title,source=row.get('source'),url=row.get('url'),published_at=at)
-            priority=0 if at.date()==now.date() else 1 if at.date()==previous else 2
+            priority=0 if at.date()==session else 1 if at.date()==previous else 2
             valid.append((priority,at,evidence))
         except (ValueError,TypeError,KeyError):continue
     valid.sort(key=lambda x:(x[0],not bool(re.search('코스피|코스닥|증시|급락|급등',x[2].title)) if market else False,-x[1].timestamp()))
@@ -53,26 +60,35 @@ def recent_headlines(rows,now,*,market=False):
     return out[:8]
 
 
-async def collect_headlines(theme,now):
+async def collect_headlines(theme,now,anchor=None):
     async def one(leader):
         try:return (await get_news_by_symbol(leader.code,5))[:5]
         except Exception:return []
     rows=await asyncio.gather(*(one(leader) for leader in theme.leaders))
-    return recent_headlines([r for group in rows for r in group],now)
+    return recent_headlines([r for group in rows for r in group],now,anchor=anchor)
 
 
-async def collect_market_context(now):
+async def market_news_on(day):
+    # 지난 거래일(주말·장 마감 다음 날) 시장 기사는 날짜 지정 목록에서 가져온다.
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        response=await client.get(MARKET_NEWS_URL,params={'date':day.strftime('%Y%m%d')},headers={'User-Agent':'Mozilla/5.0'},timeout=10)
+    response.raise_for_status()
+    return parse_market_news(response.text)
+
+
+async def collect_market_context(now,anchor=None):
     indices=[]
     for name,code in (('코스피','0001'),('코스닥','1001')):
         try:
             quote=await get_index_price(code)
             if quote and quote.get('change_rate') is not None:indices.append(MarketIndex(name=name,change_rate=quote['change_rate']))
         except Exception:pass
-    try:rows=await get_market_news(80)
+    session,_=session_dates(now,anchor)
+    try:rows=await (get_market_news(80) if session==now.date() else market_news_on(session))
     except Exception:rows=[]
-    today=[r for r in rows if (at:=news_time(r.get('date'),now)) is not None and at.date()==now.date()]
+    today=[r for r in rows if (at:=news_time(r.get('date'),now)) is not None and at.date()==session]
     today.sort(key=lambda r:not bool(re.search('코스피|코스닥|증시|급락|급등',r.get('title',''))))
-    evidence=recent_headlines(today,now,market=True)
+    evidence=recent_headlines(today,now,market=True,anchor=anchor)
     by_id={'m-'+str(i):e for i,e in enumerate(evidence)}
     context=MarketContext(indices=indices,headlines=[Headline(id=i,title=e.title,source=e.source,published_at=e.published_at) for i,e in by_id.items()])
     return context,by_id
@@ -100,12 +116,12 @@ class ThemeBriefService:
             except Exception:
                 if self.last_good and self.clock()-self.last_good[0]<=3600:return self.last_good[1].model_copy(deep=True)
                 raise ThemeUnavailable() from None
-            try:market,market_evidence=await self.market(datetime.now(KST))
+            try:market,market_evidence=await self.market(datetime.now(KST),snapshot.as_of)
             except Exception:market,market_evidence=MarketContext(),{}
             inputs=[];evidence={};self.diagnostics={}
             for direction,themes in (('rising',snapshot.rising),('falling',snapshot.falling)):
                 for theme in themes:
-                    rows=await self.collect(theme,datetime.now(KST))
+                    rows=await self.collect(theme,datetime.now(KST),snapshot.as_of)
                     local={'t'+theme.id+'-'+str(i):e for i,e in enumerate(rows)}
                     evidence[theme.id]={**market_evidence,**local}
                     if rows or market.headlines:inputs.append(ThemeInput(id=theme.id,name=theme.name,direction=direction,

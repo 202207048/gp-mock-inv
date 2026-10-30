@@ -123,6 +123,12 @@ class MarketContextTests(TestCase):
         {'title':'오늘 기사','date':'5분전'}]
   self.assertEqual([e.title for e in recent_headlines(rows,now)],['오늘 기사','어제 기사'])
 
+ def test_weekend_uses_quote_session_not_wall_clock(self):
+  now=datetime(2026,10,31,8,tzinfo=KST);as_of=datetime(2026,10,30,20,20,tzinfo=KST)
+  rows=[{'title':'토요일 뉴욕증시 급락','date':'2026.10.31 06:09'},{'title':'금요일 코스피 급락','date':'2026.10.30 15:52'},
+        {'title':'목요일 기사','date':'2026.10.29 14:00'},{'title':'수요일 기사','date':'2026.10.28 14:00'}]
+  self.assertEqual([e.title for e in recent_headlines(rows,now,anchor=as_of)],['금요일 코스피 급락','목요일 기사'])
+
 
 class MarketCollectionTests(IsolatedAsyncioTestCase):
  async def test_market_indices_partial_failure_and_today_priority(self):
@@ -138,3 +144,12 @@ class MarketCollectionTests(IsolatedAsyncioTestCase):
   self.assertEqual(len(context.headlines),8)
   self.assertTrue(all(h.id.startswith('m-') and h.published_at.date()==now.date() for h in context.headlines))
   self.assertFalse(any('보호예수' in h.title for h in context.headlines))
+
+ async def test_weekend_market_news_limited_to_quote_session(self):
+  from app.services.theme_brief_service import collect_market_context
+  now=datetime(2026,10,31,8,tzinfo=KST);as_of=datetime(2026,10,30,20,20,tzinfo=KST)
+  rows=[{'title':'뉴욕증시 급락','date':'2026.10.31 06:09'},{'title':'코스피 급락 마감','date':'2026.10.30 15:40'}]
+  with patch('app.services.theme_brief_service.get_index_price',AsyncMock(return_value=None)),patch('app.services.theme_brief_service.get_market_news',AsyncMock()) as latest,patch('app.services.theme_brief_service.market_news_on',AsyncMock(return_value=rows)) as dated:
+   context,_=await collect_market_context(now,as_of)
+  self.assertEqual([h.title for h in context.headlines],['코스피 급락 마감'])
+  latest.assert_not_awaited();dated.assert_awaited_once_with(as_of.date())

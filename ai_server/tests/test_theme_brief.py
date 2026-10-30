@@ -89,3 +89,9 @@ def test_prompt_avoids_card_numbers_but_allows_news_context_numbers():
  assert '화면에 따로 표시되므로 문장에 반복하지 말고' in prompt
  assert '기사에서 읽히는 소식과 맥락에 집중' in prompt
  assert '맥락에 필요한 숫자는 사용할 수' in prompt
+
+
+def test_prompt_allows_sector_news_and_rejects_contrast_only_evidence():
+ prompt=build_theme_prompt(ThemeBriefRequest(**DATA))
+ assert '같은 업종의 움직임을 다룬 기사면 근거로' in prompt
+ assert '시장이 반대로 움직였다는 기사만 있다면' in prompt
