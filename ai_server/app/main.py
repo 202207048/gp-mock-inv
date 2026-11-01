@@ -1,4 +1,5 @@
 from .theme_routes import router as theme_router
+from .stock_brief_routes import router as stock_brief_router
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -43,6 +44,7 @@ from .summarizers.pattern_gemini import GeminiPatternBriefGenerator
 
 app = FastAPI(title="News AI Analysis")
 app.include_router(theme_router)
+app.include_router(stock_brief_router)
 app.state.provider_manager = RuntimeProviderManager(get_ai_provider())
 app.state.model_profiles = ModelProfileRegistry()
 
