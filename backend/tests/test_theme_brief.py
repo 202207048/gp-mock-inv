@@ -67,12 +67,15 @@ class ServiceTests(IsolatedAsyncioTestCase):
   self.assertNotIn('provider',values[0].model_dump_json())
   self.now=1799;await self.service.get();self.assertEqual(self.generate.await_count,1)
   self.now=1800;await self.service.get();self.assertEqual(self.generate.await_count,2)
- async def test_ai_failure_five_minute_cache_but_thirty_minute_budget(self):
+ async def test_ai_failure_retries_after_five_minutes(self):
   self.generate.side_effect=RuntimeError('fixture')
   self.assertIsNone((await self.service.get()).rising[0].reason)
   self.now=299;await self.service.get();self.assertEqual(self.fetch.await_count,1)
-  self.now=300;await self.service.get();self.assertEqual(self.fetch.await_count,2);self.assertEqual(self.generate.await_count,1)
-  self.now=1800;await self.service.get();self.assertEqual(self.generate.await_count,2)
+  self.generate.side_effect=lambda *a:generated()
+  self.now=300;value=await self.service.get();self.assertEqual(self.fetch.await_count,2);self.assertEqual(self.generate.await_count,2)
+  self.assertTrue(value.rising[0].reason)
+  self.now=2099;await self.service.get();self.assertEqual(self.generate.await_count,2)
+  self.now=2100;await self.service.get();self.assertEqual(self.generate.await_count,3)
  async def test_naver_stale_then_unavailable(self):
   await self.service.get();self.fetch.side_effect=RuntimeError('offline')
   self.now=1800;self.assertTrue((await self.service.get()).rising)

@@ -107,7 +107,7 @@ class ThemeBriefService:
     def __init__(self,fetch=fetch_snapshot,collect=collect_headlines,generate=request_themes,clock=time.monotonic,market=collect_market_context):
         self.fetch=fetch;self.collect=collect;self.generate=generate;self.clock=clock
         self.market=market;self.diagnostics={}
-        self.lock=asyncio.Lock();self.cached=None;self.last_good=None;self.last_attempt=float('-inf')
+        self.lock=asyncio.Lock();self.cached=None;self.last_good=None;self.next_attempt=float('-inf')
     async def get(self):
         async with self.lock:
             now=self.clock()
@@ -131,8 +131,8 @@ class ThemeBriefService:
                     else:self.diagnostics[theme.id]='no_recent_news'
             degraded=False
             if inputs:
-                if now-self.last_attempt>=1800:
-                    self.last_attempt=self.clock()
+                if now>=self.next_attempt:
+                    self.next_attempt=self.clock()+1800
                     try:
                         data=await self.generate(ThemeBriefRequest(themes=inputs,market=market))
                         # 공통시장과 테마 인용을 원래 근거 기사로 복원한다.
@@ -150,6 +150,8 @@ class ThemeBriefService:
                             theme.reason=reason;theme.evidence=chosen
                             self.diagnostics[theme.id]='accepted'
                     except Exception:
+                        # 배포 순서·일시 장애로 실패하면 30분을 기다리지 않고 5분 뒤 다시 시도한다.
+                        self.next_attempt=self.clock()+300
                         degraded=True
                         for theme in snapshot.rising+snapshot.falling:
                             theme.reason=None;theme.evidence=[]
