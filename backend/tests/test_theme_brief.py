@@ -67,12 +67,15 @@ class ServiceTests(IsolatedAsyncioTestCase):
   self.assertNotIn('provider',values[0].model_dump_json())
   self.now=1799;await self.service.get();self.assertEqual(self.generate.await_count,1)
   self.now=1800;await self.service.get();self.assertEqual(self.generate.await_count,2)
- async def test_ai_failure_five_minute_cache_but_thirty_minute_budget(self):
+ async def test_ai_failure_retries_after_five_minutes(self):
   self.generate.side_effect=RuntimeError('fixture')
   self.assertIsNone((await self.service.get()).rising[0].reason)
   self.now=299;await self.service.get();self.assertEqual(self.fetch.await_count,1)
-  self.now=300;await self.service.get();self.assertEqual(self.fetch.await_count,2);self.assertEqual(self.generate.await_count,1)
-  self.now=1800;await self.service.get();self.assertEqual(self.generate.await_count,2)
+  self.generate.side_effect=lambda *a:generated()
+  self.now=300;value=await self.service.get();self.assertEqual(self.fetch.await_count,2);self.assertEqual(self.generate.await_count,2)
+  self.assertTrue(value.rising[0].reason)
+  self.now=2099;await self.service.get();self.assertEqual(self.generate.await_count,2)
+  self.now=2100;await self.service.get();self.assertEqual(self.generate.await_count,3)
  async def test_naver_stale_then_unavailable(self):
   await self.service.get();self.fetch.side_effect=RuntimeError('offline')
   self.now=1800;self.assertTrue((await self.service.get()).rising)
@@ -115,6 +118,18 @@ class ServiceTests(IsolatedAsyncioTestCase):
   self.assertEqual(self.service.diagnostics['1'],'accepted')
   self.assertNotIn('diagnostic',result.model_dump_json())
 
+ async def test_market_wide_leader_news_promoted_to_market(self):
+  now=datetime.now(KST)
+  wide=Evidence(title='[속보] 코스피 4% 급락…가상전자 6%↓',source='가상신문',url=None,published_at=now)
+  self.collect.side_effect=None;self.collect.return_value=[wide,evidence()[0]]
+  seen=[]
+  self.generate.side_effect=lambda req:seen.append(req) or {'themes':[{'id':'1','reason':'코스피 급락과 함께 약세였어요.','headline_ids':['m-0']}]}
+  result=await self.service.get()
+  request=seen[0]
+  self.assertEqual([(h.id,h.title) for h in request.market.headlines],[('m-0',wide.title)])
+  self.assertEqual([h.title for h in request.themes[0].headlines],['가상전자 공급계약 체결'])
+  self.assertEqual(result.rising[0].evidence[0].title,wide.title)
+
 class MarketContextTests(TestCase):
  def test_today_previous_weekday_and_generic_filter(self):
   now=datetime(2026,10,30,15,tzinfo=KST)
@@ -154,6 +169,19 @@ class MarketCollectionTests(IsolatedAsyncioTestCase):
   self.assertEqual([h.title for h in context.headlines],['코스피 급락 마감'])
   latest.assert_not_awaited();dated.assert_awaited_once_with(as_of.date())
 
+ async def test_dated_market_news_fills_day_labels(self):
+  from datetime import date
+  from app.services.theme_brief_service import market_news_on
+  real=httpx.AsyncClient
+  rows=[{'title':'코스피 급락 마감','date':'1일전'},{'title':'뉴욕증시 하락','date':'2026.10.30 22:10'}]
+  with patch('app.services.theme_brief_service.httpx.AsyncClient',side_effect=lambda **kw:real(transport=httpx.MockTransport(lambda req:httpx.Response(200,text='')),**kw)),patch('app.services.theme_brief_service.parse_market_news',return_value=rows):
+   out=await market_news_on(date(2026,10,30))
+  self.assertEqual([r['date'] for r in out],['2026.10.30 00:00','2026.10.30 22:10'])
+ def test_html_entities_unescaped_in_titles(self):
+  from app.services.theme_brief_service import recent_headlines
+  now=datetime.now(KST)
+  out=recent_headlines([{'title':'&quot;기판·전력&quot; 삼성전기 상승','date':now.strftime('%Y.%m.%d %H:%M')}],now)
+  self.assertEqual(out[0].title,'"기판·전력" 삼성전기 상승')
 
 class PublicJsonTypeTests(TestCase):
  def test_numbers_are_json_numbers(self):

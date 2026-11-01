@@ -1,5 +1,6 @@
 """사용자 공용 테마 캐시와 기사 근거 중계."""
 import asyncio
+import html
 from datetime import datetime, timedelta
 import time
 import logging
@@ -46,7 +47,7 @@ def recent_headlines(rows,now,*,market=False,anchor=None):
         try:
             at=news_time(row.get('date'),now)
             if at is None or at>now or at.date() not in (session,previous):continue
-            title=' '.join(row['title'].split())
+            title=' '.join(html.unescape(row['title']).split())
             if not title or any(pattern.replace(' ','') in title.replace(' ','') for pattern in GENERIC_TITLES):continue
             if any(marker in title for marker in SPECULATIVE_TITLES):continue
             evidence=Evidence(title=title,source=row.get('source'),url=row.get('url'),published_at=at)
@@ -73,7 +74,11 @@ async def market_news_on(day):
     async with httpx.AsyncClient(follow_redirects=True) as client:
         response=await client.get(MARKET_NEWS_URL,params={'date':day.strftime('%Y%m%d')},headers={'User-Agent':'Mozilla/5.0'},timeout=10)
     response.raise_for_status()
-    return parse_market_news(response.text)
+    rows=parse_market_news(response.text)
+    # 하루가 지나면 시각이 '1일전'처럼만 표시된다. 날짜 지정 목록은 모두 그날 기사이므로 날짜로 채운다.
+    for row in rows:
+        if news_time(row.get('date'),datetime.now(KST)) is None:row['date']=day.strftime('%Y.%m.%d 00:00')
+    return rows
 
 
 async def collect_market_context(now,anchor=None):
@@ -94,6 +99,21 @@ async def collect_market_context(now,anchor=None):
     return context,by_id
 
 
+MARKET_WIDE=re.compile(r'(코스피|코스닥|증시).*(급락|급등|하락|상승|마감)')
+
+
+def promote_market_wide(market,market_evidence,collected):
+    # 종목 기사에 섞인 증시 전체 기사는 공통시장 기사로 옮겨 어느 테마든 같은 id로 인용하게 한다.
+    promoted=[e for rows in collected.values() for e in rows if MARKET_WIDE.search(e.title)]
+    if not promoted:return market,market_evidence
+    for key in collected:collected[key]=[e for e in collected[key] if not MARKET_WIDE.search(e.title)]
+    seen=set();merged=[]
+    for e in promoted+list(market_evidence.values()):
+        if e.title not in seen:merged.append(e);seen.add(e.title)
+    by_id={'m-'+str(i):e for i,e in enumerate(merged[:8])}
+    return MarketContext(indices=market.indices,headlines=[Headline(id=i,title=e.title,source=e.source,published_at=e.published_at) for i,e in by_id.items()]),by_id
+
+
 async def request_themes(request):
     headers=service_headers()
     base=httpx.URL(settings.AI_SERVER_URL.strip())
@@ -107,7 +127,7 @@ class ThemeBriefService:
     def __init__(self,fetch=fetch_snapshot,collect=collect_headlines,generate=request_themes,clock=time.monotonic,market=collect_market_context):
         self.fetch=fetch;self.collect=collect;self.generate=generate;self.clock=clock
         self.market=market;self.diagnostics={}
-        self.lock=asyncio.Lock();self.cached=None;self.last_good=None;self.last_attempt=float('-inf')
+        self.lock=asyncio.Lock();self.cached=None;self.last_good=None;self.next_attempt=float('-inf')
     async def get(self):
         async with self.lock:
             now=self.clock()
@@ -118,10 +138,13 @@ class ThemeBriefService:
                 raise ThemeUnavailable() from None
             try:market,market_evidence=await self.market(datetime.now(KST),snapshot.as_of)
             except Exception:market,market_evidence=MarketContext(),{}
+            collected={}
+            for theme in snapshot.rising+snapshot.falling:collected[theme.id]=await self.collect(theme,datetime.now(KST),snapshot.as_of)
+            market,market_evidence=promote_market_wide(market,market_evidence,collected)
             inputs=[];evidence={};self.diagnostics={}
             for direction,themes in (('rising',snapshot.rising),('falling',snapshot.falling)):
                 for theme in themes:
-                    rows=await self.collect(theme,datetime.now(KST),snapshot.as_of)
+                    rows=collected[theme.id]
                     local={'t'+theme.id+'-'+str(i):e for i,e in enumerate(rows)}
                     evidence[theme.id]={**market_evidence,**local}
                     if rows or market.headlines:inputs.append(ThemeInput(id=theme.id,name=theme.name,direction=direction,
@@ -131,8 +154,8 @@ class ThemeBriefService:
                     else:self.diagnostics[theme.id]='no_recent_news'
             degraded=False
             if inputs:
-                if now-self.last_attempt>=1800:
-                    self.last_attempt=self.clock()
+                if now>=self.next_attempt:
+                    self.next_attempt=self.clock()+1800
                     try:
                         data=await self.generate(ThemeBriefRequest(themes=inputs,market=market))
                         # 공통시장과 테마 인용을 원래 근거 기사로 복원한다.
@@ -150,6 +173,8 @@ class ThemeBriefService:
                             theme.reason=reason;theme.evidence=chosen
                             self.diagnostics[theme.id]='accepted'
                     except Exception:
+                        # 배포 순서·일시 장애로 실패하면 30분을 기다리지 않고 5분 뒤 다시 시도한다.
+                        self.next_attempt=self.clock()+300
                         degraded=True
                         for theme in snapshot.rising+snapshot.falling:
                             theme.reason=None;theme.evidence=[]
