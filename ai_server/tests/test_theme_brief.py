@@ -66,6 +66,7 @@ def test_opposite_direction_is_prompt_rule_and_fake_can_abstain():
  data=deepcopy(DATA);data['themes'][0]['direction']='falling'
  request=ThemeBriefRequest(**data)
  assert '방향이 반대' in build_theme_prompt(request)
+ assert '다른 테마·업종 이름' in build_theme_prompt(request)
  assert validate_theme_output(output(None,[]),request).themes[0].reason is None
 
 
