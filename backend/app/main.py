@@ -194,3 +194,7 @@ async def stop_misu_monitor():
 def root():
     """서버가 정상 실행 중인지 확인하는 API."""
     return {"status": "ok", "message": "GP 모의투자 API 서버가 실행 중입니다."}
+
+
+from app.routers.ai_theme import router as ai_theme_router
+app.include_router(ai_theme_router, prefix="/api/ai", tags=["AI/테마"])
