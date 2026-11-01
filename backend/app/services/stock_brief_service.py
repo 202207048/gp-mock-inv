@@ -1,5 +1,6 @@
 """종목별 뉴스 근거 중계와 프로세스 공용 캐시."""
 import asyncio
+import html
 from collections import OrderedDict
 from datetime import datetime, timedelta
 import logging
@@ -44,7 +45,7 @@ def article_inputs(rows,prefix,now,as_of):
     dates=session_dates(now,as_of);out={}
     for row in rows:
         try:
-            at=news_time(row.get('date'),now);title=' '.join(row['title'].split())
+            at=news_time(row.get('date'),now);title=' '.join(html.unescape(row['title']).split())
             if at is None or not now-timedelta(days=3)<=at<=now:continue
             if not title or any(x.replace(' ','') in title.replace(' ','') for x in GENERIC_TITLES) or any(x in title for x in SPECULATIVE_TITLES):continue
             if title in {h.title for h,e in out.values()}:continue

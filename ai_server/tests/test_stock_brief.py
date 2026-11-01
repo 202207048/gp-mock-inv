@@ -53,3 +53,11 @@ def test_invalid_title_only_removed(change):
 
 def test_malformed_envelope_is_failure_not_abstention():
  with pytest.raises(ValueError):sanitize_stock_output({},StockBriefRequest(**DATA))
+
+def test_numbers_must_come_from_cited_titles_or_rates():
+ data={**DATA,'stock':{**DATA['stock'],'headlines':[{**DATA['stock']['headlines'][0],'title':'코스피 3%대 급락'}]}}
+ req=StockBriefRequest(**data)
+ ok=sanitize_stock_output({**output(),'title':'코스피 3%대 급락'},req)
+ assert ok['title']=='코스피 3%대 급락'
+ assert sanitize_stock_output({**output(),'title':'코스피 5% 급락'},req)['title'] is None
+ assert sanitize_stock_output({**output(),'title':'2% 하락 속 실적 부진'},req)['title']=='2% 하락 속 실적 부진'

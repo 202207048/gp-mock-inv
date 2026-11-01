@@ -88,6 +88,8 @@ class ValidationTests(TestCase):
   rows=[dict(title=t,date=d) for t,d in [('실적 발표','2026-10-30T10:00:00+09:00'),('주말 행사','2026-11-01T10:00:00+09:00'),('상승 전망','2026-10-30T10:00:00+09:00'),('오래된 뉴스','2026-10-20T10:00:00+09:00')]]
   out=article_inputs(rows,'s-',now,anchor)
   self.assertEqual(len(out),2);self.assertTrue(out['s-0'][0].in_move_window);self.assertFalse(out['s-1'][0].in_move_window)
+  out=article_inputs([dict(title='&quot;기판·전력&quot; 상승',date='2026-10-30T10:00:00+09:00')],'s-',now,anchor)
+  self.assertEqual(out['s-0'][0].title,'"기판·전력" 상승')
  def test_related_selection(self):
   rows=[dict(itemCode=c,stockName=c,closePrice='1,000',fluctuationsRatio=str(v)) for c,v in [('000001',-10),('000002',3),('000003',-2),('000004',-4),('000005',-1),('000006',5)]]
   self.assertEqual([s.code for s in select_related(rows,'000001',-2)],['000004','000003','000005','000006'])
