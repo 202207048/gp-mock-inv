@@ -198,3 +198,6 @@ def root():
 
 from app.routers.ai_theme import router as ai_theme_router
 app.include_router(ai_theme_router, prefix="/api/ai", tags=["AI/테마"])
+
+from app.routers.ai_stock import router as ai_stock_router
+app.include_router(ai_stock_router, prefix="/api/ai", tags=["AI"])
