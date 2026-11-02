@@ -783,3 +783,21 @@ def test_prompt_dates_converted_without_mutation():
     assert not re.search(r'\d{4}-\d{2}-\d{2}T|\+00:00',json.dumps(payload))
     assert _prompt_datetime(date(2026,9,30))=='2026년 9월 30일'
     assert request.model_dump()==before
+
+
+@pytest.mark.parametrize("cls", ADAPTERS)
+def test_won_amounts_are_shown_with_commas_and_without_zero_decimals(cls):
+    brief = {**BRIEF, "headline": "공급계약 체결 소식이 이어졌습니다.",
+             "current_status": ["평균단가 1420000.00원, 현재가 1480000원입니다.", "평가손익은 -600000.00원입니다."],
+             "entry_context": [], "watch_points": ["100.25원, 1,420,000원, 4조3000억원과 5.35%는 그대로 둡니다."]}
+    adapter, _ = fake_adapter(cls, brief=brief)
+    result = adapter.generate(PortfolioBriefRequest(**REQUEST))
+    assert result.current_status == ["평균단가 1,420,000원, 현재가 1,480,000원입니다.", "평가손익은 -600,000원입니다."]
+    assert result.watch_points == ["100.25원, 1,420,000원, 4조3000억원과 5.35%는 그대로 둡니다."]
+
+
+def test_prompt_keeps_holding_numbers_out_of_the_headline():
+    prompt = build_portfolio_brief_prompt(PortfolioBriefRequest(**REQUEST))
+    assert "가장 중요한 소식 한 가지만" in prompt
+    assert "보유 숫자는 headline에 쓰지 말고" in prompt
+    assert "1,420,000원" in prompt

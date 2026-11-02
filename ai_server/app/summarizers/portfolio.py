@@ -1,5 +1,6 @@
 """Portfolio synthesis from supplied facts, with the existing execution contract."""
 import json
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import Protocol
@@ -72,7 +73,10 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
         "상승세를 보고 매수했다, 좋은/나쁜 매수 타이밍, 고점에 물렸다, 추세 추종, 저점 매수 성공 같은 "
         "사용자 의도/실력/진입 평가를 하지 마세요. "
         "entry_context는 과거 가격만, recent_issues는 현재 최신 뉴스만 설명하고 둘 사이 인과관계를 만들지 마세요. "
-        "headline은 현재 보유상태와 가장 중요한 최근 이슈를 한 문장으로 설명하세요. "
+        "headline은 최근 기사에서 확인되는 가장 중요한 소식 한 가지만 짧은 한 문장으로 요약하세요. "
+        "보유수량·평균단가·현재가·손익 같은 보유 숫자는 headline에 쓰지 말고 current_status에만 쓰세요. "
+        "recent_news가 비어 있을 때만 headline에 현재 보유상태를 한 문장으로 요약하세요. "
+        "원 단위 금액은 천 단위마다 쉼표를 넣고 소수점 아래가 0이면 빼서 쓰세요(예: 1,420,000원). "
         "퍼센트는 제공된 소수 둘째 자리 이하의 표현을 사용하고 자릿수를 늘리거나 재계산하지 마세요. "
         "current_status는 holding에 제공된 보유수량·평균단가·현재가·평가손익·수익률만 1~3개로 정리하세요. "
         "current_price가 null이거나 평균단가가 0 이하이면 수익·손실·수익률을 생성하지 마세요. "
@@ -110,6 +114,20 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
     )
 
 
+_WON = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?=\s*원)")
+TEXT_FIELDS = ("current_status", "entry_context", "position_summary", "recent_issues",
+               "positive_factors", "risk_factors", "watch_points", "limitations")
+
+
+def format_won(text: str) -> str:
+    """'1420000.00원'처럼 쓴 금액을 '1,420,000원'으로 맞춘다. 0이 아닌 소수점 아래는 남긴다."""
+    def replace(match):
+        whole = f"{int(match.group(1).replace(',', '')):,}"
+        fraction = (match.group(2) or "").rstrip("0")
+        return f"{whole}.{fraction}" if fraction else whole
+    return _WON.sub(replace, text)
+
+
 def validate_portfolio_brief(brief: PortfolioBrief, request: PortfolioBriefRequest) -> PortfolioBrief:
     if (request.entry_price_context is None or not request.entry_price_context.available) and brief.entry_context:
         raise ValueError("Unavailable entry context must not be reconstructed")
@@ -117,4 +135,5 @@ def validate_portfolio_brief(brief: PortfolioBrief, request: PortfolioBriefReque
         raise ValueError("Unavailable position must not be reconstructed")
     if not request.recent_news and brief.recent_issues:
         raise ValueError("Missing news must not be reconstructed")
-    return brief
+    return brief.model_copy(update={"headline": format_won(brief.headline),
+                                    **{field: [format_won(text) for text in getattr(brief, field)] for field in TEXT_FIELDS}})
