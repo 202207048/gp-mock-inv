@@ -842,3 +842,24 @@ def test_endpoint_sends_guesses_only_to_backends_that_sent_a_trend(api, monkeypa
     assert old.status_code == 200 and "trend_guesses" not in old.json()
     new = client.post(PATH, json=body(profile="luna", recent_trend=TREND))
     assert new.status_code == 200 and new.json()["trend_guesses"] == [GUESS]
+
+
+@pytest.mark.parametrize("cls", ADAPTERS)
+def test_news_lines_keep_valid_article_numbers_and_ranges_read_with_spaces(cls):
+    brief = {**BRIEF, "headline": "공급계약을 체결했습니다.[1]",
+             "recent_issues": ["공급계약을 체결했습니다.[1][9]", "비용이 늘었습니다. [2]"],
+             "current_status": ["가격 범위는 1417299원~1516934원입니다. [1]"],
+             "watch_points": ["-2.5%~3%와 10~20개 범위를 봅니다."]}
+    adapter, _ = fake_adapter(cls, brief=brief)
+    result = adapter.generate(PortfolioBriefRequest(**REQUEST))
+    assert result.headline == "공급계약을 체결했습니다. [1]"
+    assert result.recent_issues == ["공급계약을 체결했습니다. [1]", "비용이 늘었습니다. [2]"]
+    assert result.current_status == ["가격 범위는 1,417,299원 ~ 1,516,934원입니다."]
+    assert result.watch_points == ["-2.5% ~ 3%와 10 ~ 20개 범위를 봅니다."]
+
+
+def test_prompt_asks_for_article_numbers_instead_of_source_phrases():
+    prompt = build_portfolio_brief_prompt(PortfolioBriefRequest(**REQUEST))
+    assert "[1]처럼 근거 기사 번호" in prompt
+    assert "'기사에서 언급됐습니다'" in prompt
+    assert "물결표 앞뒤를 한 칸" in prompt

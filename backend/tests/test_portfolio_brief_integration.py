@@ -40,6 +40,8 @@ BODY = {"entry_context": [], "headline": "현재 보유 상태와 최근 공급 
         "watch_points": ["계약 후속 공시를 확인합니다."],
         "limitations": ["과거 뉴스와 가격 시점 자료는 제공되지 않습니다."],
         "disclaimer": PORTFOLIO_DISCLAIMER, "trend_guesses": []}
+# The article the AI numbered [1], as the public response exposes it.
+SOURCE = {key: NEWS.get(key) for key in ("title", "url", "source", "date")}
 RealAsyncClient = httpx.AsyncClient
 
 
@@ -133,7 +135,17 @@ class ProjectionTests(unittest.TestCase):
         result = service._parse_result(data, facts(), "sol", UUID(data["ai"]["trace_id"]))
         exposed = PortfolioBriefResponse(symbol_code="SYN001", security_name="가온기술", generated_at=START,
                                           **result.brief()).model_dump()
-        self.assertEqual(exposed, {"symbol_code": "SYN001", "security_name": "가온기술", "generated_at": START, **BODY})
+        self.assertEqual(exposed, {"symbol_code": "SYN001", "security_name": "가온기술", "generated_at": START,
+                                   "sources": [], **BODY})
+
+
+class SourceTests(unittest.TestCase):
+    def test_only_http_links_are_exposed_and_long_text_is_cut(self):
+        from app.routers.ai import brief_source
+        from app.schemas.portfolio_brief import RecentNews
+        self.assertIsNone(brief_source(RecentNews(title="t", url="javascript:alert(1)")).url)
+        item = brief_source(RecentNews(title="x" * 900, url="https://n.news.naver.com/a", source="", date=None))
+        self.assertEqual((len(item.title), item.url, item.source), (500, "https://n.news.naver.com/a", None))
 
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
@@ -384,7 +396,7 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         payload = result.json()
         self.assertIsNotNone(datetime.fromisoformat(payload.pop("generated_at")).utcoffset())
-        self.assertEqual(payload, {"symbol_code": "SYN001", "security_name": "가온기술", **BODY})
+        self.assertEqual(payload, {"symbol_code": "SYN001", "security_name": "가온기술", **BODY, "sources": [SOURCE]})
         self.assertEqual(self.generate.await_count, 1)
         kwargs = self.generate.call_args.kwargs
         self.assertEqual(kwargs["profile"], "luna")
@@ -551,7 +563,7 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertIsNotNone(datetime.fromisoformat(payload.pop("generated_at")).utcoffset())
-        self.assertEqual(payload, {"symbol_code": "SYN001", "security_name": "가온기술", **BODY})
+        self.assertEqual(payload, {"symbol_code": "SYN001", "security_name": "가온기술", **BODY, "sources": [SOURCE]})
         self.assertEqual(payloads[0]["profile"], "luna")
         for key in ("model", "provider", "reasoning"):
             self.assertNotIn(key, payloads[0])

@@ -166,10 +166,22 @@ class PortfolioBriefBody(BaseModel):
     trend_guesses: list[BriefText] = Field(default_factory=list, max_length=2)
 
 
+class BriefSource(BaseModel):
+    """[n] 기사 번호가 가리키는 기사. 링크는 http(s)만 둔다."""
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=500)
+    url: str | None = Field(default=None, max_length=4000, pattern=r"^https?://")
+    source: str | None = Field(default=None, max_length=100)
+    date: str | None = Field(default=None, max_length=40)
+
+
 class PortfolioBriefResponse(PortfolioBriefBody):
     generated_at: AwareDatetime
     symbol_code: str
     security_name: str | None
+    # recent_news in the order the AI numbered it; briefings saved before this have none.
+    sources: list[BriefSource] = Field(default_factory=list, max_length=5)
 
 
 class SavedPortfolioBriefs(BaseModel):

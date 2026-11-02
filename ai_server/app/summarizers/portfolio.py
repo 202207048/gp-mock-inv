@@ -92,6 +92,12 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
         "recent_news는 최신 기사이며 과거 매수 당시 뉴스가 아닙니다. "
         "사용자가 이 기사 때문에 매수했다거나 기사 이후 매수했다고 연결하지 마세요. 사용자 매수 이유 추정은 금지합니다. "
         "recent_issues는 최신 기사에 실제 존재하는 핵심 이슈 최대 3개이며 중복 이슈를 합치세요. "
+        "recent_news는 배열 순서대로 1번부터 번호가 있습니다. 기사에 근거한 headline, recent_issues, positive_factors, "
+        "risk_factors, watch_points, trend_guesses 문장 끝에는 [1]처럼 근거 기사 번호를 붙이고 여러 개면 [1][3]처럼 이어 쓰세요. "
+        "출처는 번호로 따로 표시되므로 '기사에서 언급됐습니다', '기사 제목에 제시됐습니다', '기사에 포함됐습니다' 같은 "
+        "출처 설명 문구는 쓰지 말고 내용만 바로 쓰세요(예: '클라우드 3사는 수요가 공급을 웃돈다고 밝혔습니다. [2]'). "
+        "current_status, entry_context, position_summary, limitations에는 기사 번호를 붙이지 마세요. "
+        "가격이나 금액 범위는 '1,417,299원 ~ 1,516,934원'처럼 물결표 앞뒤를 한 칸 띄우세요. "
         "recent_news가 비어 있으면 recent_issues는 빈 배열로 두고 뉴스 내용을 만들지 마세요. "
         "trend_guesses 밖의 모든 섹션에서 뉴스와 주가 움직임의 인과관계는 생성하지 마세요. 기사 자체가 원인을 주장하더라도 "
         "그 섹션들에서는 뉴스는 최근 이슈, 가격은 현재 보유상태로만 설명하세요. "
@@ -123,6 +129,9 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
     )
 
 
+_CITE = re.compile(r"\s*\[(\d+)\]")
+_RANGE = re.compile(r"(?<=[\d원%])\s*~\s*(?=[-\d])")
+CITED_FIELDS = ("recent_issues", "positive_factors", "risk_factors", "watch_points", "trend_guesses")
 _WON = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?=\s*원)")
 TEXT_FIELDS = ("current_status", "entry_context", "position_summary", "recent_issues",
                "positive_factors", "risk_factors", "watch_points", "limitations", "trend_guesses")
@@ -137,6 +146,14 @@ def format_won(text: str) -> str:
     return _WON.sub(replace, text)
 
 
+def tidy(text: str, articles: int) -> str:
+    """원 금액 쉼표, 범위 물결표 띄어쓰기, 없는 기사 번호 제거. articles=0이면 번호를 모두 뺀다."""
+    def cite(match):
+        number = int(match.group(1))
+        return f" [{number}]" if 1 <= number <= articles else ""
+    return _CITE.sub(cite, _RANGE.sub(" ~ ", format_won(text))).strip()
+
+
 def validate_portfolio_brief(brief: PortfolioBrief, request: PortfolioBriefRequest) -> PortfolioBrief:
     if (request.entry_price_context is None or not request.entry_price_context.available) and brief.entry_context:
         raise ValueError("Unavailable entry context must not be reconstructed")
@@ -147,5 +164,7 @@ def validate_portfolio_brief(brief: PortfolioBrief, request: PortfolioBriefReque
     # Guesses need both a trend and articles, and must say they are guesses; anything else is dropped.
     guesses = [text for text in brief.trend_guesses if "추정" in text] if request.recent_trend and request.recent_news else []
     brief = brief.model_copy(update={"trend_guesses": guesses})
-    return brief.model_copy(update={"headline": format_won(brief.headline),
-                                    **{field: [format_won(text) for text in getattr(brief, field)] for field in TEXT_FIELDS}})
+    articles = len(request.recent_news)
+    return brief.model_copy(update={"headline": tidy(brief.headline, articles),
+                                    **{field: [tidy(text, articles if field in CITED_FIELDS else 0)
+                                               for text in getattr(brief, field)] for field in TEXT_FIELDS}})

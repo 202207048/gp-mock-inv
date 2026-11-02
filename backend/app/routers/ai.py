@@ -46,7 +46,7 @@ from app.services.kis_service import get_current_price
 from app.services.news_service import get_news_by_symbol
 from app.utils.deps import get_current_user
 from app.schemas.portfolio_brief import (
-    PortfolioBriefFacts, PortfolioBriefHistory, PortfolioBriefHistoryItem, PortfolioBriefResponse,
+    BriefSource, PortfolioBriefFacts, PortfolioBriefHistory, PortfolioBriefHistoryItem, PortfolioBriefResponse,
     PortfolioProfile, SavedPortfolioBriefs,
 )
 from app.schemas.brief_report import BriefReportRequest, BriefReportResponse
@@ -529,6 +529,13 @@ async def portfolio_brief_facts(
     return await build_portfolio_facts(snapshot)
 
 
+def brief_source(news) -> BriefSource:
+    # A link that is not plain http(s) is dropped; the article number still shows its title.
+    url = news.url if isinstance(news.url, str) and news.url.startswith(("https://", "http://")) else None
+    return BriefSource(title=news.title[:500], url=url, source=(news.source or None) and news.source[:100],
+                       date=(news.date or None) and news.date[:40])
+
+
 @router.get("/portfolio-brief/{symbol_code}", response_model=PortfolioBriefResponse,
             summary="현재 보유종목 AI 브리핑")
 async def portfolio_brief(
@@ -555,6 +562,7 @@ async def portfolio_brief(
     request.state.ai_execution = result.ai
     public = PortfolioBriefResponse(
         symbol_code=facts.symbol_code, security_name=facts.security_name, generated_at=datetime.now(KST), **result.brief(),
+        sources=[brief_source(news) for news in facts.recent_news],
     )
 
     await asyncio.to_thread(save_portfolio, db, current_user.user_id, snapshot.account_id,
