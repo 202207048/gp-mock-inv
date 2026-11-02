@@ -23,7 +23,7 @@ class ServiceTests(IsolatedAsyncioTestCase):
  async def asyncSetUp(self):
   self.now=0;self.quote=AsyncMock(side_effect=lambda code:quote());self.related=AsyncMock(return_value=[])
   self.collect=AsyncMock(side_effect=lambda *a:(articles(),{},{}));self.generate=AsyncMock(side_effect=lambda r:generated())
-  self.service=StockBriefService(self.quote,self.related,self.collect,self.generate,lambda:self.now)
+  self.service=StockBriefService(self.quote,self.related,self.collect,self.generate,lambda:self.now,load=lambda code:None,save=lambda *args:None)
  async def test_ttl_refresh_quote_only_then_expire(self):
   await self.service.get('000001');self.now=10799
   result=await self.service.get('000001');self.assertEqual(self.generate.await_count,1);self.assertEqual(self.quote.await_count,2)

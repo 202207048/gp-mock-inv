@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 PositionReason = Literal[
     "legacy_execution_time_unavailable", "ambiguous_execution_order",
@@ -156,5 +156,10 @@ class PortfolioBriefBody(BaseModel):
 
 
 class PortfolioBriefResponse(PortfolioBriefBody):
+    generated_at: AwareDatetime
     symbol_code: str
     security_name: str | None
+
+
+class SavedPortfolioBriefs(BaseModel):
+    items: list[PortfolioBriefResponse]

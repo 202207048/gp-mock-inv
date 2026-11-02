@@ -46,7 +46,7 @@ from app.services.kis_service import get_current_price
 from app.services.news_service import get_news_by_symbol
 from app.utils.deps import get_current_user
 from app.schemas.portfolio_brief import (
-    PortfolioBriefFacts, PortfolioBriefResponse, PortfolioProfile,
+    PortfolioBriefFacts, PortfolioBriefResponse, PortfolioProfile, SavedPortfolioBriefs,
 )
 from app.services.portfolio_brief_client import (
     PortfolioBriefUnavailable, request_portfolio_brief,
@@ -54,6 +54,9 @@ from app.services.portfolio_brief_client import (
 from app.services.portfolio_brief_service import (
     PortfolioFactsSnapshot, build_portfolio_facts, load_portfolio_facts,
 )
+
+from app.services.brief_store import save_portfolio, list_portfolio
+from app.services.theme_service import KST
 
 # prefix는 main.py에서 /api/ai 로 지정
 router = APIRouter(tags=["AI/설문"])
@@ -529,6 +532,8 @@ async def portfolio_brief(
     response: Response,
     profile: PortfolioProfile = Query("luna", description="요청별 모델 프로필: luna 또는 sol"),
     snapshot: PortfolioFactsSnapshot = Depends(get_portfolio_facts_snapshot),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> PortfolioBriefResponse:
     # Authorization and holding validation have already completed in the dependency.
     trace_id = uuid4()
@@ -544,9 +549,30 @@ async def portfolio_brief(
         raise HTTPException(exc.status_code, detail=str(exc),
                             headers={"X-Trace-ID": str(trace_id)}) from None
     request.state.ai_execution = result.ai
-    return PortfolioBriefResponse(
-        symbol_code=facts.symbol_code, security_name=facts.security_name, **result.brief(),
+    public = PortfolioBriefResponse(
+        symbol_code=facts.symbol_code, security_name=facts.security_name, generated_at=datetime.now(KST), **result.brief(),
     )
+
+    await asyncio.to_thread(save_portfolio, db, current_user.user_id, snapshot.account_id,
+                            facts.symbol_code, public.model_dump(mode='json'))
+    return public
+
+
+@router.get("/portfolio-brief/{symbol_code}/saved", response_model=SavedPortfolioBriefs,
+            summary="보유종목 브리핑 저장본 조회")
+def saved_portfolio_briefs(symbol_code: str, account_id: int = Query(..., gt=0),
+                           current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    account = db.query(Account).filter(Account.account_id == account_id, Account.user_id == current_user.user_id).first()
+    if account is None:
+        raise HTTPException(404, "계좌를 찾을 수 없습니다.")
+    items = []
+    for payload in list_portfolio(db, current_user.user_id, account_id, symbol_code):
+        try:
+            item = PortfolioBriefResponse.model_validate(payload)
+            if item.symbol_code == symbol_code:items.append(item)
+        except ValueError:
+            continue
+    return SavedPortfolioBriefs(items=items)
 
 
 @router.post("/news-analysis", response_model=NewsAnalysisResponse)

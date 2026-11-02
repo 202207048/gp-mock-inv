@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, event, select, func
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
-from app.models import Account, AiPropensityAdvice, Comment, Follow, ItemMaster, Order, OrderAutomation, Portfolio, Post, PostLike, User, UserSurveyResponse
+from app.models import Account, AiBriefResult, AiPropensityAdvice, Comment, Follow, ItemMaster, Order, OrderAutomation, Portfolio, Post, PostLike, User, UserSurveyResponse
 from app.models.misu import MisuDebt, MisuPayment, MisuSettlement
 from app.routers.auth import router
 from app.utils.security import create_access_token, hash_password
@@ -36,6 +36,8 @@ class WithdrawalTests(unittest.TestCase):
                 db.add(Post(post_id=uid, user_id=uid, title='Title', content='Content'))
                 db.add(UserSurveyResponse(user_id=uid, question_number=1, selected_answer='Answer'))
                 db.add(AiPropensityAdvice(user_id=uid, ai_analysis_result='Result'))
+                db.flush()
+                db.add(AiBriefResult(kind='portfolio', user_id=uid, account_id=uid, symbol_code='TEST', payload={}, created_at=datetime.now()))
             db.flush()
             for uid in (1, 2):
                 db.add(Order(order_id=uid, account_id=uid, symbol_code='TEST', order_type='buy', price=1, quantity=1))
@@ -76,7 +78,7 @@ class WithdrawalTests(unittest.TestCase):
         with self.Session() as db:
             self.assertIsNone(db.get(User, 1))
             self.assertIsNotNone(db.get(User, 2))
-            for model in (Account, Order, OrderAutomation, Portfolio, MisuDebt, MisuPayment, MisuSettlement, Post, Comment, PostLike, UserSurveyResponse, AiPropensityAdvice):
+            for model in (AiBriefResult, Account, Order, OrderAutomation, Portfolio, MisuDebt, MisuPayment, MisuSettlement, Post, Comment, PostLike, UserSurveyResponse, AiPropensityAdvice):
                 self.assertEqual(db.scalar(select(func.count()).select_from(model)), 1, model.__name__)
             self.assertEqual(db.scalar(select(func.count()).select_from(Follow)), 0)
         self.assertEqual(self.client.get('/api/users/me', headers=self.headers).status_code, 401)

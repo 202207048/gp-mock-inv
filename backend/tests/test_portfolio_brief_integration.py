@@ -131,9 +131,9 @@ class ProjectionTests(unittest.TestCase):
         data = wire("sol", uuid4())
         ai_schema().PortfolioBriefResponse.model_validate(data)
         result = service._parse_result(data, facts(), "sol", UUID(data["ai"]["trace_id"]))
-        exposed = PortfolioBriefResponse(symbol_code="SYN001", security_name="가온기술",
+        exposed = PortfolioBriefResponse(symbol_code="SYN001", security_name="가온기술", generated_at=START,
                                           **result.brief()).model_dump()
-        self.assertEqual(exposed, {"symbol_code": "SYN001", "security_name": "가온기술", **BODY})
+        self.assertEqual(exposed, {"symbol_code": "SYN001", "security_name": "가온기술", "generated_at": START, **BODY})
 
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
@@ -380,7 +380,9 @@ class EndpointTests(unittest.TestCase):
     def test_authenticated_success_with_default_luna_and_private_metadata(self):
         result = self.get()
         self.assertEqual(result.status_code, 200, result.text)
-        self.assertEqual(result.json(), {"symbol_code": "SYN001", "security_name": "가온기술", **BODY})
+        payload = result.json()
+        self.assertIsNotNone(datetime.fromisoformat(payload.pop("generated_at")).utcoffset())
+        self.assertEqual(payload, {"symbol_code": "SYN001", "security_name": "가온기술", **BODY})
         self.assertEqual(self.generate.await_count, 1)
         kwargs = self.generate.call_args.kwargs
         self.assertEqual(kwargs["profile"], "luna")
@@ -545,7 +547,9 @@ class EndpointTests(unittest.TestCase):
         with patch.object(service.httpx, "AsyncClient", side_effect=factory):
             response = self.get(query="&model=untrusted&provider=gemini&reasoning=high")
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"symbol_code": "SYN001", "security_name": "가온기술", **BODY})
+        payload = response.json()
+        self.assertIsNotNone(datetime.fromisoformat(payload.pop("generated_at")).utcoffset())
+        self.assertEqual(payload, {"symbol_code": "SYN001", "security_name": "가온기술", **BODY})
         self.assertEqual(payloads[0]["profile"], "luna")
         for key in ("model", "provider", "reasoning"):
             self.assertNotIn(key, payloads[0])

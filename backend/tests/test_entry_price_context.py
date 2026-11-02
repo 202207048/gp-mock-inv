@@ -211,7 +211,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         data=wire("sol",trace)
         data["entry_context"]=["시작 직전 완료 세션 가격만 확인됩니다."]
         result=bridge._parse_result(data,bundle,"sol",trace)
-        exposed=PortfolioBriefResponse(symbol_code=bundle.symbol_code,security_name=bundle.security_name,**result.brief())
+        exposed=PortfolioBriefResponse(symbol_code=bundle.symbol_code,security_name=bundle.security_name,generated_at=datetime.now(timezone.utc),**result.brief())
         self.assertEqual(exposed.entry_context,data["entry_context"])
 
     async def test_unavailable_projection_and_output_never_reconstruct(self):

@@ -2,7 +2,7 @@
 import asyncio
 import html
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import re
 import time
@@ -15,6 +15,8 @@ from app.services.news_service import get_news_by_symbol
 from app.services.theme_service import KST, number
 from app.services.theme_brief_service import collect_market_context, news_time, session_dates, GENERIC_TITLES, SPECULATIVE_TITLES
 from app.services.stock_brief_validation import sanitize_stock_output
+
+from app.services.brief_store import load_stock, save_stock
 
 logger=logging.getLogger(__name__)
 NAVER='https://m.stock.naver.com/api/stock/'
@@ -80,13 +82,28 @@ async def request_stock(request):
 class StockUnavailable(Exception):pass
 
 class StockBriefService:
-    def __init__(self,quote=fetch_quote,related=fetch_related,collect=collect_articles,generate=request_stock,clock=time.monotonic):
+    def __init__(self,quote=fetch_quote,related=fetch_related,collect=collect_articles,generate=request_stock,clock=time.monotonic,load=load_stock,save=save_stock):
         self.quote=quote;self.related=related;self.collect=collect;self.generate=generate;self.clock=clock
+        self.load=load;self.save=save
         self.cache=OrderedDict();self.locks=WeakValueDictionary()
     async def get(self,code):
         lock=self.locks.setdefault(code,asyncio.Lock())
         async with lock:
             old=self.cache.get(code);fresh=True
+            if old is None:
+                try:
+                    stored=await asyncio.to_thread(self.load,code)
+                    if stored:
+                        payload,created_at=stored
+                        # SQLite는 timezone 정보를 보존하지 않아 UTC로 복원한다.
+                        if created_at.tzinfo is None:created_at=created_at.replace(tzinfo=timezone.utc)
+                        age=(datetime.now(timezone.utc)-created_at).total_seconds()
+                        snapshot=StockPublicResponse.model_validate(payload)
+                        if 0<=age<10800 and snapshot.symbol_code==code and snapshot.ai_available:
+                            old=(self.clock()-age,10800,snapshot)
+                            self.cache[code]=old
+                            while len(self.cache)>200:self.cache.popitem(last=False)
+                except Exception:logger.warning('brief_store operation=restore_stock failed')
             try:quote=await self.quote(code)
             except Exception:
                 fresh=False
@@ -130,6 +147,9 @@ class StockBriefService:
             logger.info('stock_diagnostic code=%s result=%s',code,diagnostic)
             self.cache[code]=(self.clock(),ttl,snapshot.model_copy(deep=True));self.cache.move_to_end(code)
             while len(self.cache)>200:self.cache.popitem(last=False)
+            if ttl==10800 and snapshot.ai_available:
+                try:await asyncio.to_thread(self.save,code,snapshot.model_dump(mode='json'))
+                except Exception:logger.warning('brief_store operation=persist_stock failed')
             return snapshot
 
 service=StockBriefService()
