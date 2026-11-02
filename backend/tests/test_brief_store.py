@@ -6,7 +6,7 @@ from sqlalchemy import create_engine,select,func,event,inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database import Base
-from app.models import AiBriefResult,User,Account
+from app.models import AiBriefReport,AiBriefResult,User,Account
 from app.services import brief_store as store
 from app.services.stock_brief_service import StockBriefService
 from app.schemas.stock_brief import StockPublicResponse
@@ -66,19 +66,37 @@ class StoreTests(unittest.TestCase):
    self.assertEqual(store.list_portfolio(db,1,1,'A'),[{'n':2},{'n':1}])
    self.assertEqual(store.list_portfolio(db,1,1,'B'),[{'n':10}])
    self.assertEqual(store.list_portfolio(db,2,2,'A'),[{'n':20}])
+   self.assertEqual([p for _,p in store.list_history(db,1,1)],[{'n':10},{'n':2},{'n':1},{'n':0}])
+ def test_three_day_cutoff_hides_then_prunes_older_rows(self):
+  now=datetime(2026,11,2,1,0,tzinfo=timezone.utc)  # KST 11-02 10:00
+  self.assertEqual(store.cutoff(now),datetime(2026,10,29,15,0,tzinfo=timezone.utc))  # KST 10-30 00:00
+  with self.Session() as db:
+   for n in range(2):store.save_portfolio(db,1,1,'A',{'n':n})
+   rows=list(db.scalars(select(AiBriefResult).order_by(AiBriefResult.id)))
+   rows[0].created_at=store.cutoff()-timedelta(seconds=1);rows[1].created_at=store.cutoff()+timedelta(seconds=1);db.commit()
+   self.assertEqual([p for _,p in store.list_history(db,1,1)],[{'n':1}])
+   store.save_portfolio(db,1,1,'B',{'n':2})
+   self.assertEqual(db.scalar(select(func.count()).select_from(AiBriefResult)),2)
+ def test_keep_limit_and_owned_delete(self):
+  with patch.object(store,'KEEP_LIMIT',3),self.Session() as db:
+   for n in range(5):store.save_portfolio(db,1,1,'A',{'n':n})
+   history=store.list_history(db,1,1);self.assertEqual([p for _,p in history],[{'n':4},{'n':3},{'n':2}])
+   self.assertFalse(store.delete_portfolio(db,2,2,history[0][0]))
+   self.assertTrue(store.delete_portfolio(db,1,1,history[0][0]))
+   self.assertEqual([p for _,p in store.list_history(db,1,1)],[{'n':3},{'n':2}])
 
 class SavedApiTests(unittest.TestCase):
  setUp=portfolio.EndpointTests.setUp
  get=portfolio.EndpointTests.get
  def saved(self,account=1,symbol='SYN001'):
   return self.client.get(f'/api/ai/portfolio-brief/{symbol}/saved?account_id={account}')
- def test_success_saves_recent_two_and_saved_is_offline(self):
+ def test_success_saves_and_saved_is_offline(self):
   responses=[self.get().json() for _ in range(3)]
   self.generate.reset_mock();self.quote.reset_mock();self.news.reset_mock()
   response=self.saved();self.assertEqual(response.status_code,200,response.text)
   self.assertEqual(response.json()['items'],list(reversed(responses[-2:])))
   self.generate.assert_not_awaited();self.quote.assert_not_awaited();self.news.assert_not_awaited()
-  with self.Session() as db:self.assertEqual(db.scalar(select(func.count()).select_from(AiBriefResult)),2)
+  with self.Session() as db:self.assertEqual(db.scalar(select(func.count()).select_from(AiBriefResult)),3)
  def test_failed_generation_not_saved(self):
   self.generate.side_effect=portfolio.service.PortfolioBriefUnavailable(502)
   self.assertEqual(self.get().status_code,502);self.assertEqual(self.saved().json(),{'items':[]})
@@ -95,6 +113,51 @@ class SavedApiTests(unittest.TestCase):
    db.query(portfolio.Portfolio).delete();db.commit()
   self.assertEqual(self.saved().json()['items'],[payload])
   self.assertEqual(self.saved(symbol='OTHER').json(),{'items':[]})
+
+class HistoryAndReportApiTests(unittest.TestCase):
+ setUp=portfolio.EndpointTests.setUp
+ get=portfolio.EndpointTests.get
+ def history(self,account=1):
+  return self.client.get(f'/api/ai/portfolio-briefs?account_id={account}')
+ def report(self,**body):
+  return self.client.post('/api/ai/brief-reports',json={'kind':'portfolio','symbol_code':'SYN001','account_id':1,'reason':'wrong_fact',**body})
+ def test_history_lists_with_ids_and_delete_is_owner_only(self):
+  first,second=self.get().json(),self.get().json()
+  items=self.history().json()['items']
+  self.assertEqual([item['generated_at'] for item in items],[second['generated_at'],first['generated_at']])
+  self.assertTrue(all(isinstance(item['id'],int) for item in items))
+  self.assertEqual(self.history(account=2).status_code,404)
+  self.assertEqual(self.client.delete(f"/api/ai/portfolio-briefs/{items[0]['id']}?account_id=2").status_code,404)
+  self.assertEqual(self.client.delete(f"/api/ai/portfolio-briefs/{items[0]['id']}?account_id=1").status_code,204)
+  self.assertEqual(self.client.delete(f"/api/ai/portfolio-briefs/{items[0]['id']}?account_id=1").status_code,404)
+  self.assertEqual([item['id'] for item in self.history().json()['items']],[items[1]['id']])
+ def test_portfolio_report_stores_server_copy_once(self):
+  brief=self.get().json()
+  response=self.report(generated_at=brief['generated_at'],note='  숫자가 이상해요  ')
+  self.assertEqual(response.status_code,201,response.text)
+  with self.Session() as db:
+   row=db.scalar(select(AiBriefReport))
+   self.assertEqual((row.user_id,row.account_id,row.kind,row.symbol_code,row.reason,row.note),(1,1,'portfolio','SYN001','wrong_fact','숫자가 이상해요'))
+   self.assertEqual(row.payload,brief)
+  self.assertEqual(self.report(generated_at=brief['generated_at']).status_code,409)
+  self.assertEqual(self.report(generated_at='2026-01-01T00:00:00+09:00').status_code,404)
+  self.assertEqual(self.report(generated_at=brief['generated_at'],account_id=2).status_code,404)
+  self.assertEqual(self.report(generated_at=brief['generated_at'],payload={'x':1}).status_code,422)
+  self.assertEqual(self.report(generated_at=brief['generated_at'],reason='spam').status_code,422)
+  self.assertEqual(self.report(generated_at=brief['generated_at'],note='가'*201).status_code,422)
+ def test_stock_report_uses_current_shared_briefing_and_daily_limit(self):
+  payload={'symbol_code':'000660','generated_at':'2026-11-02T12:40:00+09:00','title':'서버 원문'}
+  with patch.object(store,'load_stock',return_value=(payload,datetime.now(timezone.utc))):
+   ok=self.report(kind='stock',symbol_code='000660',account_id=None,generated_at=payload['generated_at'])
+   self.assertEqual(ok.status_code,201,ok.text)
+   self.assertEqual(self.report(kind='stock',symbol_code='000660',generated_at='2026-11-02T09:00:00+09:00').status_code,404)
+   with patch('app.services.brief_report.DAILY_LIMIT',1):
+    self.assertEqual(self.report(kind='stock',symbol_code='000660',generated_at=payload['generated_at'],reason='other').status_code,429)
+  with self.Session() as db:
+   row=db.scalar(select(AiBriefReport));self.assertEqual((row.kind,row.account_id,row.payload),('stock',None,payload))
+ def test_report_requires_login(self):
+  self.app.dependency_overrides.pop(portfolio.get_current_user)
+  self.assertIn(self.report(generated_at='2026-11-02T12:40:00+09:00').status_code,(401,403))
 
 class SaveFailureApiTests(unittest.TestCase):
  setUp=portfolio.EndpointTests.setUp
@@ -122,3 +185,19 @@ class MigrationTests(unittest.TestCase):
     self.assertIn('ai_brief_results',inspect(conn).get_table_names())
     self.assertEqual(inspect(conn).get_indexes('ai_brief_results')[0]['column_names'],['kind','symbol_code','user_id','account_id','created_at'])
     revision.downgrade();self.assertNotIn('ai_brief_results',inspect(conn).get_table_names())
+ def test_report_revision_upgrade_and_downgrade(self):
+  from alembic.migration import MigrationContext
+  from alembic.operations import Operations
+  from alembic.script import ScriptDirectory
+  from pathlib import Path
+  scripts=ScriptDirectory(str(Path(__file__).resolve().parents[1]/'alembic'))
+  revision=scripts.get_revision('k20261102_ai_brief_reports').module
+  self.assertEqual(revision.down_revision,'j20261102_ai_brief_results')
+  engine=create_engine('sqlite://');self.addCleanup(engine.dispose)
+  with engine.begin() as conn:
+   conn.exec_driver_sql('create table users (user_id integer primary key)')
+   conn.exec_driver_sql('create table account (account_id integer primary key)')
+   with Operations.context(MigrationContext.configure(conn)):
+    revision.upgrade()
+    self.assertEqual(inspect(conn).get_indexes('ai_brief_reports')[0]['column_names'],['user_id','created_at'])
+    revision.downgrade();self.assertNotIn('ai_brief_reports',inspect(conn).get_table_names())

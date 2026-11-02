@@ -11,9 +11,11 @@ from app.models.user_survey_response import UserSurveyResponse
 from app.models.ai_propensity_advice import AiPropensityAdvice
 
 from app.models.ai_brief_result import AiBriefResult
+from app.models.ai_brief_report import AiBriefReport
 
 __all__ = [
     "AiBriefResult",
+    "AiBriefReport",
     "User",
     "Account",
     "ItemMaster",

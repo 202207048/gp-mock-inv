@@ -1,7 +1,8 @@
 ## 브리핑 결과 저장 (2026-11-02)
 
-배포 전에 `backend`에서 `alembic upgrade head`로 `j20261102_ai_brief_results`를 적용합니다.
-`ai_brief_results` 테이블과 조회 인덱스를 추가하며 기존 데이터에는 영향이 없습니다.
+배포 전에 `backend`에서 `alembic upgrade head`로 `j20261102_ai_brief_results`, `k20261102_ai_brief_reports`를 적용합니다.
+`ai_brief_results`(브리핑 저장본), `ai_brief_reports`(브리핑 신고) 테이블과 인덱스를 추가하며 기존 데이터에는 영향이 없습니다.
+보유종목 브리핑은 오늘부터 3일 전(KST 날짜 기준)까지 보관하고, 그보다 오래된 기록은 새로 저장할 때 자동으로 지웁니다.
 운영 DB에는 이번 작업에서 마이그레이션을 실행하지 않았습니다.
 
 ## 커뮤니티 거래내역 카드 (2026-10-28)

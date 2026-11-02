@@ -11,7 +11,7 @@ class MigrationGraphTests(unittest.TestCase):
         self.scripts = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "alembic"))
 
     def test_exactly_one_head(self):
-        self.assertEqual(self.scripts.get_heads(), ["j20261102_ai_brief_results"])
+        self.assertEqual(self.scripts.get_heads(), ["k20261102_ai_brief_reports"])
 
     def test_merge_preserves_both_sibling_parents(self):
         merge = self.scripts.get_revision("g20261021_ai_community_merge")

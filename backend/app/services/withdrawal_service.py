@@ -4,7 +4,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    Account, AiBriefResult, AiPropensityAdvice, Comment, Follow, Order, OrderAutomation,
+    Account, AiBriefReport, AiBriefResult, AiPropensityAdvice, Comment, Follow, Order, OrderAutomation,
     Portfolio, Post, PostLike, User, UserSurveyResponse,
 )
 from app.models.misu import MisuDebt, MisuPayment, MisuSettlement
@@ -25,6 +25,7 @@ def withdraw_user(db: Session, user_id: int, passwd: str) -> None:
         for model in (OrderAutomation, MisuDebt, MisuSettlement, MisuPayment, Portfolio, Order):
             db.execute(delete(model).where(model.account_id.in_(account_ids)))
         db.execute(delete(AiBriefResult).where(AiBriefResult.user_id == user_id))
+        db.execute(delete(AiBriefReport).where(AiBriefReport.user_id == user_id))
         db.execute(delete(Account).where(Account.user_id == user_id))
 
         post_ids = select(Post.post_id).where(Post.user_id == user_id)

@@ -163,3 +163,11 @@ class PortfolioBriefResponse(PortfolioBriefBody):
 
 class SavedPortfolioBriefs(BaseModel):
     items: list[PortfolioBriefResponse]
+
+
+class PortfolioBriefHistoryItem(PortfolioBriefResponse):
+    id: int
+
+
+class PortfolioBriefHistory(BaseModel):
+    items: list[PortfolioBriefHistoryItem]

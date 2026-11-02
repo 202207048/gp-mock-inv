@@ -46,8 +46,11 @@ from app.services.kis_service import get_current_price
 from app.services.news_service import get_news_by_symbol
 from app.utils.deps import get_current_user
 from app.schemas.portfolio_brief import (
-    PortfolioBriefFacts, PortfolioBriefResponse, PortfolioProfile, SavedPortfolioBriefs,
+    PortfolioBriefFacts, PortfolioBriefHistory, PortfolioBriefHistoryItem, PortfolioBriefResponse,
+    PortfolioProfile, SavedPortfolioBriefs,
 )
+from app.schemas.brief_report import BriefReportRequest, BriefReportResponse
+from app.services.brief_report import ReportRejected, save_report
 from app.services.portfolio_brief_client import (
     PortfolioBriefUnavailable, request_portfolio_brief,
 )
@@ -55,7 +58,8 @@ from app.services.portfolio_brief_service import (
     PortfolioFactsSnapshot, build_portfolio_facts, load_portfolio_facts,
 )
 
-from app.services.brief_store import save_portfolio, list_portfolio
+from app.services.brief_store import delete_portfolio, list_history, list_portfolio, save_portfolio
+from app.services.stock_brief_service import service as stock_brief_service
 from app.services.theme_service import KST
 
 # prefix는 main.py에서 /api/ai 로 지정
@@ -573,6 +577,48 @@ def saved_portfolio_briefs(symbol_code: str, account_id: int = Query(..., gt=0),
         except ValueError:
             continue
     return SavedPortfolioBriefs(items=items)
+
+
+def _owned_account(db: Session, account_id: int, user_id: int) -> None:
+    if db.query(Account).filter(Account.account_id == account_id, Account.user_id == user_id).first() is None:
+        raise HTTPException(404, "계좌를 찾을 수 없습니다.")
+
+
+@router.get("/portfolio-briefs", response_model=PortfolioBriefHistory,
+            summary="보유종목 브리핑 최근 기록 (오늘~3일 전)")
+def portfolio_brief_history(account_id: int = Query(..., gt=0),
+                            current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _owned_account(db, account_id, current_user.user_id)
+    items = []
+    for brief_id, payload in list_history(db, current_user.user_id, account_id):
+        try:
+            items.append(PortfolioBriefHistoryItem.model_validate({**payload, "id": brief_id}))
+        except (TypeError, ValueError):
+            continue
+    return PortfolioBriefHistory(items=items)
+
+
+@router.delete("/portfolio-briefs/{brief_id}", status_code=204, summary="보유종목 브리핑 기록 삭제")
+def remove_portfolio_brief(brief_id: int, account_id: int = Query(..., gt=0),
+                           current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _owned_account(db, account_id, current_user.user_id)
+    if not delete_portfolio(db, current_user.user_id, account_id, brief_id):
+        raise HTTPException(404, "브리핑 기록을 찾을 수 없습니다.")
+    return Response(status_code=204)
+
+
+@router.post("/brief-reports", response_model=BriefReportResponse, status_code=201, summary="AI 브리핑 신고")
+def report_brief(body: BriefReportRequest, current_user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    cached = None
+    if body.kind == "stock":
+        entry = stock_brief_service.cache.get(body.symbol_code)
+        cached = entry[2].model_dump(mode="json") if entry else None
+    try:
+        report_id, created_at = save_report(db, current_user.user_id, body, cached)
+    except ReportRejected as exc:
+        raise HTTPException(exc.status_code, exc.detail) from None
+    return BriefReportResponse(id=report_id, created_at=created_at)
 
 
 @router.post("/news-analysis", response_model=NewsAnalysisResponse)
