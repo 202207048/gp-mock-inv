@@ -95,6 +95,8 @@ class EntryPriceContext(FactSchema):
     return_20_sessions: Decimal | None = Field(default=None, allow_inf_nan=False)
     high_20_sessions: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
     low_20_sessions: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    # Mean close of the same range_sessions sessions, rounded to whole won.
+    average_close_20_sessions: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
     range_sessions: int = Field(default=0, strict=True, ge=0, le=20)
     opening_vs_prior_close_pct: Decimal | None = Field(default=None, allow_inf_nan=False)
 
@@ -113,7 +115,7 @@ class EntryPriceContext(FactSchema):
                 raise ValueError("Invalid historical range")
         elif (self.reason is None or any(v is not None for v in (
             *prices, self.prior_close_date, self.return_5_sessions, self.return_20_sessions,
-            self.opening_vs_prior_close_pct,
+            self.opening_vs_prior_close_pct, self.average_close_20_sessions,
         )) or self.range_sessions != 0):
             raise ValueError("Unavailable entry context must not contain historical facts")
         if self.reason == "position_unavailable" and (
@@ -140,6 +142,8 @@ class PortfolioBriefFacts(FactSchema):
     entry_price_context: EntryPriceContext = Field(default_factory=lambda: EntryPriceContext(
         available=False, reason="historical_price_unavailable"))
     recent_trend: RecentTrend | None = None
+    # Experimental: articles from the days before the position started (empty unless switched on).
+    entry_news: list[RecentNews] = Field(default_factory=list, max_length=5)
     limitations: list[FactLimitation]
 
 
@@ -162,8 +166,10 @@ class PortfolioBriefBody(BaseModel):
     watch_points: list[BriefText] = Field(max_length=3)
     limitations: list[BriefText] = Field(max_length=3)
     disclaimer: Literal["모의투자 연습용 설명이며 투자 권유가 아닙니다."]
-    # Labelled guesses linking recent reports with the current trend; older saved briefings have none.
-    trend_guesses: list[BriefText] = Field(default_factory=list, max_length=2)
+    # Labelled guesses linking reports with the price trend; older saved briefings have none.
+    trend_guesses: list[BriefText] = Field(default_factory=list, max_length=3)
+    # Reports from the days before the position started (experimental switch).
+    entry_news_summary: list[BriefText] = Field(default_factory=list, max_length=2)
 
 
 class BriefSource(BaseModel):
@@ -180,8 +186,8 @@ class PortfolioBriefResponse(PortfolioBriefBody):
     generated_at: AwareDatetime
     symbol_code: str
     security_name: str | None
-    # recent_news in the order the AI numbered it; briefings saved before this have none.
-    sources: list[BriefSource] = Field(default_factory=list, max_length=5)
+    # recent_news then entry_news, in the order the AI numbered them; older briefings have none.
+    sources: list[BriefSource] = Field(default_factory=list, max_length=10)
 
 
 class SavedPortfolioBriefs(BaseModel):

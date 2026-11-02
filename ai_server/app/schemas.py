@@ -262,6 +262,7 @@ class PortfolioEntryPriceContext(Schema):
     return_20_sessions: Decimal | None = Field(default=None, allow_inf_nan=False)
     high_20_sessions: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
     low_20_sessions: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
+    average_close_20_sessions: Decimal | None = Field(default=None, gt=0, allow_inf_nan=False)
     range_sessions: int = Field(default=0, strict=True, ge=0, le=20)
     opening_vs_prior_close_pct: Decimal | None = Field(default=None, allow_inf_nan=False)
 
@@ -280,7 +281,7 @@ class PortfolioEntryPriceContext(Schema):
                 raise ValueError("Invalid historical range")
         elif (self.reason is None or any(v is not None for v in (
             *prices, self.prior_close_date, self.return_5_sessions, self.return_20_sessions,
-            self.opening_vs_prior_close_pct,
+            self.opening_vs_prior_close_pct, self.average_close_20_sessions,
         )) or self.range_sessions != 0):
             raise ValueError("Unavailable entry context must not contain historical facts")
         if self.reason == "position_unavailable" and (
@@ -313,6 +314,8 @@ class PortfolioBriefRequest(Schema):
     entry_price_context: PortfolioEntryPriceContext | None = None
     # Optional so an older Backend that never sends it keeps working unchanged.
     recent_trend: PortfolioRecentTrend | None = None
+    # Experimental: articles from the days before the position started; numbered after recent_news.
+    entry_news: list[PortfolioRecentNews] = Field(default_factory=list, max_length=5)
     trades: list[PortfolioTrade]
     recent_news: list[PortfolioRecentNews] = Field(max_length=5)
     limitations: list[PortfolioLimitation]
@@ -344,13 +347,15 @@ class PortfolioBrief(Schema):
     watch_points: list[SummaryText] = Field(max_length=3)
     limitations: list[SummaryText] = Field(max_length=3)
     disclaimer: Literal["모의투자 연습용 설명이며 투자 권유가 아닙니다."]
-    # Clearly labelled guesses linking recent reports with the current price trend.
-    trend_guesses: list[SummaryText] = Field(max_length=2)
+    # Clearly labelled guesses linking reports with the price trend or the position start.
+    trend_guesses: list[SummaryText] = Field(max_length=3)
+    entry_news_summary: list[SummaryText] = Field(max_length=2)
 
 
 class PortfolioBriefResponse(PortfolioBrief):
-    # Left unset (and so omitted) for Backends that did not send a recent trend.
-    trend_guesses: list[SummaryText] = Field(default_factory=list, max_length=2)
+    # Left unset (and so omitted) for Backends that did not send a recent trend or entry news.
+    trend_guesses: list[SummaryText] = Field(default_factory=list, max_length=3)
+    entry_news_summary: list[SummaryText] = Field(default_factory=list, max_length=2)
     ai: AIExecutionMetadata | None = None
     provider: Literal["openai", "gemini"]
     model: str = Field(min_length=1, max_length=200)

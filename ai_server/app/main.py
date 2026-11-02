@@ -237,7 +237,10 @@ def generate_portfolio_brief(
         metadata = profile_metadata(outcome.metadata, context)
         return PortfolioBriefResponse(
             # Without a trend the field stays unset, so older Backends never receive it.
-            **outcome.result.model_dump(exclude=None if request.recent_trend else {"trend_guesses"}),
+            **outcome.result.model_dump(exclude={
+                *(() if request.recent_trend or request.entry_news else ("trend_guesses",)),
+                *(() if request.entry_news else ("entry_news_summary",)),
+            }),
             provider=metadata.provider, model=metadata.model,
             **({"ai": metadata} if request.include_ai_metadata else {}),
         )

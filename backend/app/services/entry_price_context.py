@@ -1,6 +1,6 @@
 """현재 포지션 시작일 이전의 완료 일봉만 사용하는 객관적 가격 문맥."""
 from datetime import date, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import httpx
 
@@ -58,12 +58,14 @@ def calculate_entry_price_context(position: PositionFacts, rows: list[dict]) -> 
     def change(base):
         return (prior / base - 1) * 100 if base > 0 else None
     opening = position.opening_price
+    average = (sum(v[3] for v in recent) / len(recent)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     return EntryPriceContext(
         available=True, anchor_at=position.started_at, opening_price=opening,
         prior_close_date=sessions[-1], prior_close=prior,
         return_5_sessions=change(values[-6][3]) if len(values) >= 6 else None,
         return_20_sessions=change(values[-21][3]) if len(values) >= 21 else None,
         high_20_sessions=max(v[1] for v in recent), low_20_sessions=min(v[2] for v in recent),
+        average_close_20_sessions=average,
         range_sessions=len(recent),
         opening_vs_prior_close_pct=(opening / prior - 1) * 100 if opening is not None else None,
     )

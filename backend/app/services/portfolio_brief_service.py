@@ -1,6 +1,7 @@
 """인증된 보유 사실과 최신 공개 데이터를 결합한다. AI 생성은 수행하지 않는다."""
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from fastapi import HTTPException
@@ -8,6 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.account import Account
 from app.models.order import Order
 from app.models.portfolio import Portfolio
@@ -19,7 +21,7 @@ from app.services.entry_price_context import (
     calculate_entry_price_context, calculate_recent_trend, load_daily_rows, unavailable,
 )
 from app.services.kis_service import get_current_price
-from app.services.news_service import get_news_by_symbol
+from app.services.news_service import get_news_by_symbol, get_news_by_symbol_around
 from app.services.position_replay import PositionReplayResult, replay_current_position
 
 
@@ -116,15 +118,53 @@ async def _recent_news(symbol_code: str) -> list[RecentNews]:
         return []
 
 
+KST = timezone(timedelta(hours=9))
+ENTRY_NEWS_DAYS = 4
+
+
+def _article_time(value) -> datetime | None:
+    for fmt in ("%Y.%m.%d %H:%M", "%Y.%m.%d"):
+        try:
+            return datetime.strptime(str(value or "").strip(), fmt).replace(tzinfo=KST)
+        except ValueError:
+            continue
+    return None
+
+
+async def _entry_news(symbol_code: str, position) -> list[RecentNews]:
+    """포지션 시작 전 ENTRY_NEWS_DAYS일 안의 기사만, 시작 시각에 가까운 순으로 최대 5개."""
+    if not settings.ENABLE_PORTFOLIO_ENTRY_NEWS or not position.available or position.started_at is None:
+        return []
+    start = position.started_at.astimezone(KST)
+    half = ENTRY_NEWS_DAYS // 2
+    try:
+        # A window centred half-way back covers [start - 4 days, start] and never reaches later days.
+        rows = await get_news_by_symbol_around(symbol_code, start.date() - timedelta(days=half), days=half, limit=20)
+    except Exception:
+        return []
+    news = []
+    for row in rows if isinstance(rows, list) else []:
+        stamp = _article_time(row.get("date")) if isinstance(row, dict) else None
+        # A date without a time could be later that day, so only earlier days count then.
+        if stamp is None or stamp > start or (len(str(row.get("date")).strip()) == 10 and stamp.date() >= start.date()):
+            continue
+        try:
+            news.append(RecentNews(title=str(row.get("title") or "").strip(), summary=row.get("summary") or "",
+                                   source=row.get("source"), date=row.get("date"), url=row.get("url")))
+        except ValidationError:
+            continue
+    return news[:5]
+
+
 async def build_portfolio_facts(snapshot: PortfolioFactsSnapshot) -> PortfolioBriefFacts:
     # One daily-chart read serves both the entry context and the current trend.
-    (price, change_rate), news, rows = await asyncio.gather(
-        _current_quote(snapshot.symbol_code), _recent_news(snapshot.symbol_code),
-        load_daily_rows(snapshot.symbol_code),
-    )
     position = snapshot.replay.position
+    (price, change_rate), news, rows, entry_news = await asyncio.gather(
+        _current_quote(snapshot.symbol_code), _recent_news(snapshot.symbol_code),
+        load_daily_rows(snapshot.symbol_code), _entry_news(snapshot.symbol_code, position),
+    )
     entry = unavailable(position) if rows is None else calculate_entry_price_context(position, rows)
-    limitations = ["historical_news_unavailable"]
+    limitations = [] if entry_news else ["historical_news_unavailable"]
     if not entry.available:
         limitations.append("historical_price_unavailable")
     elif entry.return_20_sessions is None:
@@ -153,5 +193,5 @@ async def build_portfolio_facts(snapshot: PortfolioFactsSnapshot) -> PortfolioBr
                              current_price=price, unrealized_pnl=pnl, return_rate=rate),
         position=snapshot.replay.position, trades=list(snapshot.replay.trades),
         recent_news=news, price_context=PriceContext(current_price=price), entry_price_context=entry,
-        recent_trend=calculate_recent_trend(rows, change_rate), limitations=limitations,
+        recent_trend=calculate_recent_trend(rows, change_rate), entry_news=entry_news, limitations=limitations,
     )

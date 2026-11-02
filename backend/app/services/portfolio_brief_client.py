@@ -53,10 +53,13 @@ def project_portfolio_brief(facts: PortfolioBriefFacts, profile: PortfolioProfil
         "entry_price_context": facts.entry_price_context.model_dump(mode="json", include={
             "available", "reason", "anchor_at", "opening_price", "prior_close_date", "prior_close",
             "return_5_sessions", "return_20_sessions", "high_20_sessions", "low_20_sessions",
-            "range_sessions", "opening_vs_prior_close_pct",
+            "range_sessions", "opening_vs_prior_close_pct", "average_close_20_sessions",
         }),
         # Sent only when known, so the AI Server adds labelled trend guesses only then.
         **({"recent_trend": facts.recent_trend.model_dump(mode="json")} if facts.recent_trend else {}),
+        **({"entry_news": [news.model_dump(mode="json", include={
+            "title", "summary", "source", "date", "url",
+        }) for news in facts.entry_news]} if facts.entry_news else {}),
         "limitations": list(facts.limitations),
         "profile": profile,
         "include_ai_metadata": True,
@@ -87,8 +90,10 @@ def _parse_result(data: object, facts: PortfolioBriefFacts, profile: PortfolioPr
             raise ValueError("Unavailable position reconstructed")
         if not facts.recent_news and result.recent_issues:
             raise ValueError("Missing news reconstructed")
-        if (not facts.recent_news or facts.recent_trend is None) and result.trend_guesses:
+        if not ((facts.recent_news and facts.recent_trend) or facts.entry_news) and result.trend_guesses:
             raise ValueError("Trend guesses without news or trend")
+        if not facts.entry_news and result.entry_news_summary:
+            raise ValueError("Entry news reconstructed")
     except ValueError:
         raise PortfolioBriefUnavailable() from None
 

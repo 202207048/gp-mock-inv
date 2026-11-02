@@ -562,7 +562,7 @@ async def portfolio_brief(
     request.state.ai_execution = result.ai
     public = PortfolioBriefResponse(
         symbol_code=facts.symbol_code, security_name=facts.security_name, generated_at=datetime.now(KST), **result.brief(),
-        sources=[brief_source(news) for news in facts.recent_news],
+        sources=[brief_source(news) for news in [*facts.recent_news, *facts.entry_news]],
     )
 
     await asyncio.to_thread(save_portfolio, db, current_user.user_id, snapshot.account_id,

@@ -57,6 +57,7 @@ BRIEF = {
     "watch_points": ["다음 실적에서 계약 매출 반영과 비용 변화를 확인할 수 있습니다."],
     "limitations": ["과거 시점의 뉴스와 가격 흐름은 제공되지 않았습니다."],
     "trend_guesses": [],
+    "entry_news_summary": [],
     "disclaimer": PORTFOLIO_DISCLAIMER,
 }
 MODELS = {"luna": ("gpt-6-luna", "none"), "sol": ("gpt-6.1-sol", "low")}
@@ -244,7 +245,7 @@ def test_output_schema_is_strict_bounded_and_disclaimer_is_fixed():
     assert set(schema["properties"]) == set(schema["required"]) == set(BRIEF)
     for name, value in BRIEF.items():
         if isinstance(value, list):
-            assert schema["properties"][name]["maxItems"] == (2 if name == "trend_guesses" else 3)
+            assert schema["properties"][name]["maxItems"] == {"trend_guesses": 3, "entry_news_summary": 2}.get(name, 3)
     for data in [{**BRIEF, "headline": " "}, {**BRIEF, "current_status": []},
                  {**BRIEF, "risk_factors": ["x"] * 4}, {**BRIEF, "extra": True},
                  {**BRIEF, "disclaimer": "different"}]:
@@ -642,7 +643,7 @@ def test_endpoint_optional_fact_absence_accepts_grounded_structured_output(api, 
     finally:
         main.app.dependency_overrides.pop(main.get_portfolio_brief_generator)
     # No recent trend was sent, so the guesses field is left out of the response.
-    expected = {key: value for key, value in brief.items() if key != "trend_guesses"}
+    expected = {key: value for key, value in brief.items() if key not in ("trend_guesses", "entry_news_summary")}
     assert response.status_code == 200 and response.json() == {**expected, "provider": "openai", "model": "unit-test-model"}
     call.assert_called_once()
 
@@ -842,6 +843,7 @@ def test_endpoint_sends_guesses_only_to_backends_that_sent_a_trend(api, monkeypa
     assert old.status_code == 200 and "trend_guesses" not in old.json()
     new = client.post(PATH, json=body(profile="luna", recent_trend=TREND))
     assert new.status_code == 200 and new.json()["trend_guesses"] == [GUESS]
+    assert "entry_news_summary" not in new.json()
 
 
 @pytest.mark.parametrize("cls", ADAPTERS)
@@ -863,3 +865,37 @@ def test_prompt_asks_for_article_numbers_instead_of_source_phrases():
     assert "[1]처럼 근거 기사 번호" in prompt
     assert "'기사에서 언급됐습니다'" in prompt
     assert "물결표 앞뒤를 한 칸" in prompt
+
+
+ENTRY_NEWS = [{"title": "가상전자 신제품 공개", "summary": "신제품을 공개했다.", "source": "가상매체",
+               "date": "2026.10.19 09:00", "url": "https://example.invalid/entry"}]
+
+
+@pytest.mark.parametrize("cls", ADAPTERS)
+def test_entry_news_summary_needs_entry_news_and_its_numbers_follow_recent_news(cls):
+    brief = {**BRIEF, "entry_news_summary": ["시작 직전 신제품을 공개했습니다. [4][5]"],
+             "trend_guesses": ["추정: 신제품 공개 무렵 포지션이 시작돼 이 소식을 보고 매수했을 수도 있다고 추정돼요. [4]"]}
+    adapter, _ = fake_adapter(cls, brief=brief)
+    result = adapter.generate(PortfolioBriefRequest(**body(entry_news=ENTRY_NEWS)))
+    assert result.entry_news_summary == ["시작 직전 신제품을 공개했습니다. [4]"]
+    assert result.trend_guesses == ["추정: 신제품 공개 무렵 포지션이 시작돼 이 소식을 보고 매수했을 수도 있다고 추정돼요. [4]"]
+    adapter, _ = fake_adapter(cls, brief=brief)
+    plain = adapter.generate(PortfolioBriefRequest(**REQUEST))
+    assert (plain.entry_news_summary, plain.trend_guesses) == ([], [])
+
+
+def test_prompt_numbers_entry_news_after_recent_news_and_adds_the_average_close():
+    prompt = build_portfolio_brief_prompt(PortfolioBriefRequest(**body(entry_news=ENTRY_NEWS)))
+    assert "entry_news 첫 기사는 [4]" in prompt
+    assert "평균 종가로 함께" in prompt
+    assert "이때도 좋은/나쁜 매수 평가와 단정은 금지" in prompt
+    assert json.loads(prompt.split("\n\n", 1)[1])["entry_news"][0]["title"] == "가상전자 신제품 공개"
+
+
+def test_endpoint_sends_entry_news_summary_only_when_entry_news_was_sent(api, monkeypatch):
+    client, _ = api
+    brief = {**BRIEF, "entry_news_summary": ["시작 직전 신제품을 공개했습니다. [4]"]}
+    monkeypatch.setattr(profiles, "OpenAIPortfolioBriefGenerator", lambda **config: OpenAIPortfolioBriefGenerator(
+        **config, client=NS(responses=NS(parse=lambda **kwargs: NS(output_parsed=PortfolioBrief(**brief), usage=None)))))
+    data = client.post(PATH, json=body(profile="luna", entry_news=ENTRY_NEWS)).json()
+    assert data["entry_news_summary"] == ["시작 직전 신제품을 공개했습니다. [4]"] and data["trend_guesses"] == []

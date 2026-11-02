@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # Persistent mock-order monitor. It never sends brokerage orders.
     ENABLE_ORDER_AUTOMATIONS: bool = True
 
+    # 실험 기능: 보유종목 브리핑에 매수 무렵(시작 전 4일) 종목 기사를 넣는다. 기본은 끔.
+    ENABLE_PORTFOLIO_ENTRY_NEWS: bool = False
+
     class Config:
         # 설정값을 읽어올 파일 이름 (.env 파일)
         env_file = ".env"

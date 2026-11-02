@@ -72,6 +72,7 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
         "시작 당일 종가나 미래 가격을 과거 문맥에 사용하지 마세요. "
         "prior_close_date의 종가와 제공된 5/20 거래세션 수익률만 설명하고 null 수익률을 계산하거나 만들지 마세요. "
         "고저 범위는 실제 range_sessions개 완료 세션의 범위이며 20개 미만이면 20일 전체로 표현하지 마세요. "
+        "average_close_20_sessions가 있으면 고저 범위와 같은 문장에 같은 세션들의 평균 종가로 함께 쓰세요. "
         "opening_price가 null이면 최초 체결가격이나 직전 종가 대비 차이를 추정하지 마세요. "
         "상승세를 보고 매수했다, 좋은/나쁜 매수 타이밍, 고점에 물렸다, 추세 추종, 저점 매수 성공 같은 "
         "사용자 의도/실력/진입 평가를 하지 마세요. "
@@ -90,10 +91,18 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
         "position.available=false이면 position_summary는 빈 배열로 두고 시작 시점·체결 이력을 추측하지 마세요. "
         "필요한 사유는 limitations에서 한 번만 설명하세요. "
         "recent_news는 최신 기사이며 과거 매수 당시 뉴스가 아닙니다. "
-        "사용자가 이 기사 때문에 매수했다거나 기사 이후 매수했다고 연결하지 마세요. 사용자 매수 이유 추정은 금지합니다. "
+        "entry_news가 있으면 포지션 시작 전 며칠 동안 보도된 과거 기사이며 번호는 recent_news 다음부터 이어집니다"
+        "(recent_news가 3개면 entry_news 첫 기사는 [4]). "
+        "entry_news_summary는 entry_news에 실제 있는 시작 무렵 사건만 최대 2개로 정리하고 기사 번호를 붙이세요. "
+        "entry_news가 없으면 entry_news_summary는 빈 배열입니다. "
+        "entry_news가 있을 때만 trend_guesses에 '추정:'으로 시작하는 문장 1개를 더해, 시작 무렵 보도와 시작 직전 가격 흐름을 "
+        "나란히 두고 그 소식이 나오던 시기에 포지션이 시작돼 관련 소식을 보고 매수했을 수도 있다고 추정임을 밝혀 쓸 수 있습니다. "
+        "이때도 좋은/나쁜 매수 평가와 단정은 금지합니다. "
+        "사용자가 recent_news 기사 때문에 매수했다거나 기사 이후 매수했다고 연결하지 마세요. "
+        "trend_guesses의 entry_news 추정 문장 밖에서는 사용자 매수 이유 추정은 금지합니다. "
         "recent_issues는 최신 기사에 실제 존재하는 핵심 이슈 최대 3개이며 중복 이슈를 합치세요. "
         "recent_news는 배열 순서대로 1번부터 번호가 있습니다. 기사에 근거한 headline, recent_issues, positive_factors, "
-        "risk_factors, watch_points, trend_guesses 문장 끝에는 [1]처럼 근거 기사 번호를 붙이고 여러 개면 [1][3]처럼 이어 쓰세요. "
+        "risk_factors, watch_points, trend_guesses, entry_news_summary 문장 끝에는 [1]처럼 근거 기사 번호를 붙이고 여러 개면 [1][3]처럼 이어 쓰세요. "
         "출처는 번호로 따로 표시되므로 '기사에서 언급됐습니다', '기사 제목에 제시됐습니다', '기사에 포함됐습니다' 같은 "
         "출처 설명 문구는 쓰지 말고 내용만 바로 쓰세요(예: '클라우드 3사는 수요가 공급을 웃돈다고 밝혔습니다. [2]'). "
         "current_status, entry_context, position_summary, limitations에는 기사 번호를 붙이지 마세요. "
@@ -124,17 +133,17 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
         "상승 확률, 수익 보장, 확정적 미래 예측은 금지합니다. "
         f"disclaimer는 '{PORTFOLIO_DISCLAIMER}'로 고정하고 본문에 면책문을 반복하지 마세요. "
         "headline, current_status, position_summary, recent_issues, positive_factors, risk_factors, "
-        "entry_context, watch_points, limitations, trend_guesses, disclaimer만 포함한 JSON을 반환하세요.\n\n"
+        "entry_context, watch_points, limitations, trend_guesses, entry_news_summary, disclaimer만 포함한 JSON을 반환하세요.\n\n"
         + json.dumps(payload, ensure_ascii=False, allow_nan=False)
     )
 
 
 _CITE = re.compile(r"\s*\[(\d+)\]")
 _RANGE = re.compile(r"(?<=[\d원%])\s*~\s*(?=[-\d])")
-CITED_FIELDS = ("recent_issues", "positive_factors", "risk_factors", "watch_points", "trend_guesses")
+CITED_FIELDS = ("recent_issues", "positive_factors", "risk_factors", "watch_points", "trend_guesses", "entry_news_summary")
 _WON = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?=\s*원)")
 TEXT_FIELDS = ("current_status", "entry_context", "position_summary", "recent_issues",
-               "positive_factors", "risk_factors", "watch_points", "limitations", "trend_guesses")
+               "positive_factors", "risk_factors", "watch_points", "limitations", "trend_guesses", "entry_news_summary")
 
 
 def format_won(text: str) -> str:
@@ -162,9 +171,11 @@ def validate_portfolio_brief(brief: PortfolioBrief, request: PortfolioBriefReque
     if not request.recent_news and brief.recent_issues:
         raise ValueError("Missing news must not be reconstructed")
     # Guesses need both a trend and articles, and must say they are guesses; anything else is dropped.
-    guesses = [text for text in brief.trend_guesses if "추정" in text] if request.recent_trend and request.recent_news else []
-    brief = brief.model_copy(update={"trend_guesses": guesses})
-    articles = len(request.recent_news)
+    grounded = (request.recent_trend and request.recent_news) or request.entry_news
+    guesses = [text for text in brief.trend_guesses if "추정" in text] if grounded else []
+    brief = brief.model_copy(update={"trend_guesses": guesses,
+                                     "entry_news_summary": brief.entry_news_summary if request.entry_news else []})
+    articles = len(request.recent_news) + len(request.entry_news)
     return brief.model_copy(update={"headline": tidy(brief.headline, articles),
                                     **{field: [tidy(text, articles if field in CITED_FIELDS else 0)
                                                for text in getattr(brief, field)] for field in TEXT_FIELDS}})

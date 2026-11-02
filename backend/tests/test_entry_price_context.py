@@ -262,3 +262,52 @@ class RecentTrendTests(unittest.IsolatedAsyncioTestCase):
         payload = bridge.project_portfolio_brief(result)
         self.assertEqual(payload["recent_trend"]["change_rate_today"], "2.5")
         self.assertNotIn("recent_trend", bridge.project_portfolio_brief(facts()))
+
+
+class EntryNewsTests(unittest.IsolatedAsyncioTestCase):
+    def snapshot(self):
+        return PortfolioFactsSnapshot(1, "SYN001", "가상종목", 10, Decimal("100"), PositionReplayResult(position()))
+
+    async def build(self, enabled, rows):
+        from app.config import settings
+        around = AsyncMock(return_value=rows)
+        with patch.object(settings, "ENABLE_PORTFOLIO_ENTRY_NEWS", enabled), \
+             patch.object(facts_service, "get_news_by_symbol_around", around), \
+             patch.object(entry, "get_chart_history", AsyncMock(return_value={"resolution": "1d", "rows": bars()})), \
+             patch.object(facts_service, "get_current_price", AsyncMock(return_value={"current_price": "130"})), \
+             patch.object(facts_service, "get_news_by_symbol", AsyncMock(return_value=[])):
+            return await facts_service.build_portfolio_facts(self.snapshot()), around
+
+    async def test_switched_off_never_fetches_past_articles(self):
+        result, around = await self.build(False, [])
+        around.assert_not_called()
+        self.assertEqual(result.entry_news, [])
+        self.assertIn("historical_news_unavailable", result.limitations)
+
+    async def test_only_articles_before_the_start_are_kept_nearest_first(self):
+        # START is 2026-10-21 10:00 KST.
+        rows = [{"title": "시작 뒤", "date": "2026.10.21 11:00", "url": "https://n.news.naver.com/late"},
+                {"title": "같은 날 시각 없음", "date": "2026.10.21"},
+                {"title": "시작 직전", "date": "2026.10.21 09:00", "url": "https://n.news.naver.com/a"},
+                {"title": "이틀 전", "date": "2026.10.19 15:00", "url": "https://n.news.naver.com/b"},
+                {"title": "", "date": "2026.10.19 15:00"}, {"title": "날짜 이상", "date": "어제"}]
+        result, around = await self.build(True, rows)
+        self.assertEqual(around.await_args.args, ("SYN001", date(2026, 10, 19)))
+        self.assertEqual(around.await_args.kwargs, {"days": 2, "limit": 20})
+        self.assertEqual([news.title for news in result.entry_news], ["시작 직전", "이틀 전"])
+        self.assertNotIn("historical_news_unavailable", result.limitations)
+        payload = bridge.project_portfolio_brief(result)
+        self.assertEqual([news["title"] for news in payload["entry_news"]], ["시작 직전", "이틀 전"])
+        self.assertEqual(payload["entry_price_context"]["average_close_20_sessions"], "115")
+        ai_schema().PortfolioBriefRequest.model_validate(payload)
+
+    async def test_failed_lookup_leaves_the_briefing_as_before(self):
+        from app.config import settings
+        with patch.object(settings, "ENABLE_PORTFOLIO_ENTRY_NEWS", True), \
+             patch.object(facts_service, "get_news_by_symbol_around", AsyncMock(side_effect=RuntimeError("down"))), \
+             patch.object(entry, "get_chart_history", AsyncMock(return_value={"resolution": "1d", "rows": bars()})), \
+             patch.object(facts_service, "get_current_price", AsyncMock(return_value={"current_price": "130"})), \
+             patch.object(facts_service, "get_news_by_symbol", AsyncMock(return_value=[])):
+            result = await facts_service.build_portfolio_facts(self.snapshot())
+        self.assertEqual(result.entry_news, [])
+        self.assertNotIn("entry_news", bridge.project_portfolio_brief(result))

@@ -39,7 +39,7 @@ BODY = {"entry_context": [], "headline": "현재 보유 상태와 최근 공급 
         "positive_factors": ["신규 계약이 확인됩니다."], "risk_factors": [],
         "watch_points": ["계약 후속 공시를 확인합니다."],
         "limitations": ["과거 뉴스와 가격 시점 자료는 제공되지 않습니다."],
-        "disclaimer": PORTFOLIO_DISCLAIMER, "trend_guesses": []}
+        "disclaimer": PORTFOLIO_DISCLAIMER, "trend_guesses": [], "entry_news_summary": []}
 # The article the AI numbered [1], as the public response exposes it.
 SOURCE = {key: NEWS.get(key) for key in ("title", "url", "source", "date")}
 RealAsyncClient = httpx.AsyncClient
@@ -238,7 +238,7 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                  {"disclaimer": "wrong"}, {"unexpected": "private-marker"},
                  {"trend_guesses": ["x"] * 3}, {"trend_guesses": ["추정: 근거 없는 추정"]}]
         # trend_guesses may be missing: AI Servers deployed before it never send the field.
-        for field in (name for name in BODY if name != "trend_guesses"):
+        for field in (name for name in BODY if name not in ("trend_guesses", "entry_news_summary")):
             data = wire("luna", self.trace)
             data.pop(field)
             cases.append(data)
