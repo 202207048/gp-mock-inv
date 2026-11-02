@@ -5,6 +5,10 @@
 보유종목 브리핑은 오늘부터 3일 전(KST 날짜 기준)까지 보관하고, 그보다 오래된 기록은 새로 저장할 때 자동으로 지웁니다.
 운영 DB에는 이번 작업에서 마이그레이션을 실행하지 않았습니다.
 
+보유종목 브리핑 응답에 `trend_guesses`(현재 흐름 추정), `entry_news_summary`(포지션 시작 무렵 보도), `sources`(기사 번호 출처)가 추가됐습니다.
+Backend가 AI Server에 `recent_trend`, `entry_news`, `average_close_20_sessions`를 새로 보내므로 **AI Server를 먼저 배포한 뒤 Backend를 배포**합니다.
+`ENABLE_PORTFOLIO_ENTRY_NEWS=true`이면 포지션 시작 전 4일 안의 종목 기사를 넣습니다(실험 기능, 기본값 false).
+
 ## 커뮤니티 거래내역 카드 (2026-10-28)
 
 매도 체결 시 실제 보유 평균단가를 `orders.sale_cost_basis`에 저장합니다.
