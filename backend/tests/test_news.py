@@ -1,4 +1,5 @@
 ﻿import unittest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 import httpx
 from fastapi.testclient import TestClient
@@ -46,6 +47,76 @@ class NewsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(client.get('/api/news/market?limit=0').status_code, 422)
             with patch('app.routers.news.get_market_news', new_callable=AsyncMock, side_effect=news.NewsUnavailable('unavailable')):
                 self.assertEqual(client.get('/api/news/market').status_code, 502)
+
+
+def article(title, stamp):
+    return {
+        "titleFull": title,
+        "mobileNewsUrl": f"https://example.com/{title}",
+        "body": "요약",
+        "officeName": "신문",
+        "datetime": stamp,
+    }
+
+
+def page(*rows):
+    return httpx.Response(200, json=[{"items": list(rows)}])
+
+
+class SymbolNewsWindowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_keeps_articles_inside_three_days(self):
+        responses = [
+            page(article("너무최근", "202611101200"), article("당일", "202611011000")),
+            page(article("사흘전", "202610290900"), article("이전", "202610200900")),
+        ]
+
+        async def fake_get(self, url, params=None, **kwargs):
+            return responses[params["page"] - 1]
+
+        with patch.object(httpx.AsyncClient, "get", new=fake_get):
+            rows = await news.get_news_by_symbol_around("005930", "2026-11-01", days=3, limit=5)
+
+        self.assertEqual([row["title"] for row in rows], ["당일", "사흘전"])
+        self.assertEqual(set(rows[0]), {"title", "url", "summary", "source", "date"})
+        self.assertEqual(rows[0]["date"], "2026.11.01 10:00")
+
+    async def test_stops_after_the_window_and_caps_pages(self):
+        calls = []
+
+        async def fake_get(self, url, params=None, **kwargs):
+            calls.append(params["page"])
+            if params["page"] == 1:
+                return page(article("이전", "202610010900"), article("창안", "202611011000"))
+            return page(article("더이전", "202609010900"))
+
+        with patch.object(httpx.AsyncClient, "get", new=fake_get):
+            rows = await news.get_news_by_symbol_around("005930", datetime(2026, 11, 1), limit=5)
+        self.assertEqual([row["title"] for row in rows], ["창안"])
+        self.assertEqual(calls, [1])
+
+        calls.clear()
+
+        async def newer(self, url, params=None, **kwargs):
+            calls.append(params["page"])
+            return page(article(f"최근{params['page']}", "202611101200"))
+
+        with patch.object(httpx.AsyncClient, "get", new=newer):
+            self.assertEqual(await news.get_news_by_symbol_around("005930", "2026-11-01"), [])
+        self.assertEqual(calls, list(range(1, 11)))
+
+    async def test_error_or_bad_date_returns_empty(self):
+        with patch.object(httpx.AsyncClient, "get", new_callable=AsyncMock, side_effect=httpx.ConnectError("offline")):
+            self.assertEqual(await news.get_news_by_symbol_around("005930", "2026-11-01"), [])
+        response = httpx.Response(500, json={}, request=httpx.Request("GET", "https://example.com"))
+        with patch.object(httpx.AsyncClient, "get", new_callable=AsyncMock, return_value=response):
+            self.assertEqual(await news.get_news_by_symbol_around("005930", "2026-11-01"), [])
+        with patch.object(httpx.AsyncClient, "get", new_callable=AsyncMock, side_effect=AssertionError("request")):
+            self.assertEqual(await news.get_news_by_symbol_around("005930", "날짜아님"), [])
+        aware = datetime(2026, 10, 31, 16, 0, tzinfo=timezone.utc)
+        response = page(article("한국날짜", "202611011000"))
+        with patch.object(httpx.AsyncClient, "get", new_callable=AsyncMock, return_value=response):
+            rows = await news.get_news_by_symbol_around("005930", aware, days=0, limit=1)
+        self.assertEqual([row["title"] for row in rows], ["한국날짜"])
 
 
 if __name__ == '__main__':

@@ -17,6 +17,7 @@ async/await 사용 이유:
     async/await로 처리하면 요청을 기다리는 동안 다른 요청도 처리 가능합니다.
 """
 
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -28,6 +29,11 @@ class NewsUnavailable(Exception):
 
 
 MARKET_NEWS_URL = "https://news.naver.com/breakingnews/section/101/258"
+_SYMBOL_NEWS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+}
+_KST = timezone(timedelta(hours=9))
 
 
 def parse_market_news(html: str) -> list[dict]:
@@ -90,52 +96,143 @@ async def get_news_by_symbol(symbol_code: str, limit: int = 10) -> list[dict]:
     code = (symbol_code or "").strip()
     size = min(max(limit, 1), 20)
     url = f"https://m.stock.naver.com/api/news/stock/{code}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-    }
 
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers, params={"pageSize": size, "page": 1}, timeout=10)
+            resp = await client.get(url, headers=_SYMBOL_NEWS_HEADERS, params={"pageSize": size, "page": 1}, timeout=10)
         if resp.status_code >= 400:
             print(f"[뉴스] 종목 뉴스 조회 실패 code={code} status={resp.status_code}")
             return []
 
-        payload = resp.json()
-        groups = payload if isinstance(payload, list) else [payload]
-        news_list = []
-        seen = set()
-        for group in groups:
-            items = group.get("items") if isinstance(group, dict) else None
-            if not isinstance(items, list):
-                continue
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                title = (item.get("titleFull") or item.get("title") or "").strip()
-                link = (item.get("mobileNewsUrl") or "").strip()
-                if not title or not link or link in seen:
-                    continue
-                seen.add(link)
-                news_list.append({
-                    "title": title,
-                    "url": link,
-                    "summary": (item.get("body") or "").strip(),
-                    "source": (item.get("officeName") or "").strip(),
-                    "date": _news_time(str(item.get("datetime") or "")),
-                })
-                if len(news_list) >= size:
-                    break
-            if len(news_list) >= size:
-                break
-
+        news_list = _symbol_articles(resp.json(), size)
         print(f"[뉴스] 종목 뉴스 code={code} status={resp.status_code} count={len(news_list)}")
         return news_list
 
     except Exception as e:
         print(f"[뉴스] 종목 뉴스 조회 실패 code={code} error={e}")
         return []
+
+
+def _symbol_articles(payload, limit: int, seen: set | None = None) -> list[dict]:
+    """네이버 종목 뉴스 JSON에서 제목, 요약, 언론사, 시간, 링크를 고른다."""
+    groups = payload if isinstance(payload, list) else [payload]
+    news_list = []
+    seen = seen if seen is not None else set()
+    for group in groups:
+        items = group.get("items") if isinstance(group, dict) else None
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            article = _symbol_article(item, seen)
+            if article is None:
+                continue
+            news_list.append(article)
+            if len(news_list) >= limit:
+                return news_list
+    return news_list
+
+
+def _symbol_article(item, seen: set) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    title = (item.get("titleFull") or item.get("title") or "").strip()
+    link = (item.get("mobileNewsUrl") or "").strip()
+    if not title or not link or link in seen:
+        return None
+    seen.add(link)
+    return {
+        "title": title,
+        "url": link,
+        "summary": (item.get("body") or "").strip(),
+        "source": (item.get("officeName") or "").strip(),
+        "date": _news_time(str(item.get("datetime") or "")),
+    }
+
+
+def _anchor_day(value) -> date | None:
+    """날짜, 시각, '2026-11-01' 같은 문자열을 한국 달력의 하루로 바꾼다."""
+    if isinstance(value, datetime):
+        stamp = value.astimezone(_KST) if value.tzinfo is not None else value
+        return stamp.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt, size in (("%Y-%m-%d", 10), ("%Y.%m.%d", 10), ("%Y%m%d", 8)):
+        try:
+            return datetime.strptime(text[:size], fmt).date()
+        except ValueError:
+            continue
+    try:
+        return _anchor_day(datetime.fromisoformat(text.replace("Z", "+00:00")))
+    except ValueError:
+        return None
+
+
+def _article_day(value: str) -> date | None:
+    shown = _news_time(value)
+    for fmt in ("%Y.%m.%d %H:%M", "%Y.%m.%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(shown, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+async def get_news_by_symbol_around(symbol_code: str, date, days: int = 3, limit: int = 5) -> list[dict]:
+    """
+    종목 뉴스 중 기준 날짜 앞뒤 days일 안의 기사만 가져옵니다.
+
+    최신 페이지부터 최대 10페이지를 보고, 기준일보다 오래된 기사가 나오면 멈춥니다.
+    결과는 get_news_by_symbol과 같은 제목, 요약, 언론사, 시간, 링크입니다.
+    기사를 못 찾거나 조회에 실패하면 빈 리스트를 반환합니다.
+    """
+    code = (symbol_code or "").strip()
+    anchor = _anchor_day(date)
+    if not code or anchor is None:
+        return []
+
+    size = min(max(limit, 1), 20)
+    window = max(days, 0)
+    start = anchor - timedelta(days=window)
+    end = anchor + timedelta(days=window)
+    url = f"https://m.stock.naver.com/api/news/stock/{code}"
+    chosen = []
+    seen = set()
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            for page in range(1, 11):
+                resp = await client.get(
+                    url, headers=_SYMBOL_NEWS_HEADERS, params={"pageSize": 20, "page": page}, timeout=10,
+                )
+                if resp.status_code >= 400:
+                    print(f"[뉴스] 종목 기간 뉴스 조회 실패 code={code} status={resp.status_code}")
+                    return []
+                rows = _symbol_articles(resp.json(), 20, seen)
+                if not rows:
+                    break
+                passed = False
+                for row in rows:
+                    article_day = _article_day(row["date"])
+                    if article_day is None or article_day > end:
+                        continue
+                    if article_day < start:
+                        passed = True
+                        continue
+                    chosen.append(row)
+                    if len(chosen) >= size:
+                        print(f"[뉴스] 종목 기간 뉴스 code={code} count={len(chosen)}")
+                        return chosen
+                if passed:
+                    break
+    except Exception as e:
+        print(f"[뉴스] 종목 기간 뉴스 조회 실패 code={code} error={e}")
+        return []
+
+    print(f"[뉴스] 종목 기간 뉴스 code={code} count={len(chosen)}")
+    return chosen
 
 
 def _news_url(href: str) -> str:
