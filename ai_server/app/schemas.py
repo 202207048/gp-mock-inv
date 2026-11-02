@@ -295,6 +295,14 @@ class PortfolioEntryPriceContext(Schema):
         return self
 
 
+class PortfolioRecentTrend(Schema):
+    """현재 시세 흐름. 오늘 등락률과 최근 완료 일봉 기준 수익률만 담는다."""
+    change_rate_today: Decimal | None = Field(default=None, allow_inf_nan=False)
+    last_session_date: date | None = None
+    return_5_sessions: Decimal | None = Field(default=None, allow_inf_nan=False)
+    return_20_sessions: Decimal | None = Field(default=None, allow_inf_nan=False)
+
+
 class PortfolioBriefRequest(Schema):
     profile: ProfileId | None = None
     include_ai_metadata: bool = False
@@ -303,6 +311,8 @@ class PortfolioBriefRequest(Schema):
     holding: PortfolioHolding
     position: PortfolioPosition
     entry_price_context: PortfolioEntryPriceContext | None = None
+    # Optional so an older Backend that never sends it keeps working unchanged.
+    recent_trend: PortfolioRecentTrend | None = None
     trades: list[PortfolioTrade]
     recent_news: list[PortfolioRecentNews] = Field(max_length=5)
     limitations: list[PortfolioLimitation]
@@ -334,9 +344,13 @@ class PortfolioBrief(Schema):
     watch_points: list[SummaryText] = Field(max_length=3)
     limitations: list[SummaryText] = Field(max_length=3)
     disclaimer: Literal["모의투자 연습용 설명이며 투자 권유가 아닙니다."]
+    # Clearly labelled guesses linking recent reports with the current price trend.
+    trend_guesses: list[SummaryText] = Field(max_length=2)
 
 
 class PortfolioBriefResponse(PortfolioBrief):
+    # Left unset (and so omitted) for Backends that did not send a recent trend.
+    trend_guesses: list[SummaryText] = Field(default_factory=list, max_length=2)
     ai: AIExecutionMetadata | None = None
     provider: Literal["openai", "gemini"]
     model: str = Field(min_length=1, max_length=200)

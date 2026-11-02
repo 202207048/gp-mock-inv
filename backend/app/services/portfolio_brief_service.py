@@ -15,7 +15,9 @@ from app.models.security import ItemMaster
 from app.schemas.portfolio_brief import (
     HoldingFacts, PortfolioBriefFacts, PriceContext, RecentNews,
 )
-from app.services.entry_price_context import load_entry_price_context
+from app.services.entry_price_context import (
+    calculate_entry_price_context, calculate_recent_trend, load_daily_rows, unavailable,
+)
 from app.services.kis_service import get_current_price
 from app.services.news_service import get_news_by_symbol
 from app.services.position_replay import PositionReplayResult, replay_current_position
@@ -70,14 +72,24 @@ def load_portfolio_facts(
     return PortfolioFactsSnapshot(account_id, code, name, holding.hold_quantity, avg_price, replay)
 
 
-async def _current_price(symbol_code: str) -> Decimal | None:
+def _finite(value) -> Decimal | None:
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    return number if number.is_finite() else None
+
+
+async def _current_quote(symbol_code: str) -> tuple[Decimal | None, Decimal | None]:
+    """(현재가, 오늘 등락률). 실패하면 둘 다 None."""
     try:
         quote = await get_current_price(symbol_code)
-        price = Decimal(str(quote.get("current_price")))
-        return price if price.is_finite() and price > 0 else None
+        price = _finite(quote.get("current_price"))
+        rate = None if isinstance(quote.get("change_rate"), bool) else _finite(quote.get("change_rate"))
+        return (price if price is not None and price > 0 else None), rate
     except Exception:
         # Upstream exceptions may contain credentials; never log or expose them.
-        return None
+        return None, None
 
 
 async def _recent_news(symbol_code: str) -> list[RecentNews]:
@@ -105,10 +117,13 @@ async def _recent_news(symbol_code: str) -> list[RecentNews]:
 
 
 async def build_portfolio_facts(snapshot: PortfolioFactsSnapshot) -> PortfolioBriefFacts:
-    price, news, entry = await asyncio.gather(
-        _current_price(snapshot.symbol_code), _recent_news(snapshot.symbol_code),
-        load_entry_price_context(snapshot.symbol_code, snapshot.replay.position),
+    # One daily-chart read serves both the entry context and the current trend.
+    (price, change_rate), news, rows = await asyncio.gather(
+        _current_quote(snapshot.symbol_code), _recent_news(snapshot.symbol_code),
+        load_daily_rows(snapshot.symbol_code),
     )
+    position = snapshot.replay.position
+    entry = unavailable(position) if rows is None else calculate_entry_price_context(position, rows)
     limitations = ["historical_news_unavailable"]
     if not entry.available:
         limitations.append("historical_price_unavailable")
@@ -138,5 +153,5 @@ async def build_portfolio_facts(snapshot: PortfolioFactsSnapshot) -> PortfolioBr
                              current_price=price, unrealized_pnl=pnl, return_rate=rate),
         position=snapshot.replay.position, trades=list(snapshot.replay.trades),
         recent_news=news, price_context=PriceContext(current_price=price), entry_price_context=entry,
-        limitations=limitations,
+        recent_trend=calculate_recent_trend(rows, change_rate), limitations=limitations,
     )

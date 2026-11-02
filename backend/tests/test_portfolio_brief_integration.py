@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 
 import httpx
@@ -39,7 +39,7 @@ BODY = {"entry_context": [], "headline": "현재 보유 상태와 최근 공급 
         "positive_factors": ["신규 계약이 확인됩니다."], "risk_factors": [],
         "watch_points": ["계약 후속 공시를 확인합니다."],
         "limitations": ["과거 뉴스와 가격 시점 자료는 제공되지 않습니다."],
-        "disclaimer": PORTFOLIO_DISCLAIMER}
+        "disclaimer": PORTFOLIO_DISCLAIMER, "trend_guesses": []}
 RealAsyncClient = httpx.AsyncClient
 
 
@@ -96,7 +96,7 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(payload["profile"], "luna")
         self.assertIs(payload["include_ai_metadata"], True)
         actual = ai_schema().PortfolioBriefRequest.model_validate(payload)
-        self.assertEqual(actual.model_dump(mode="json"), payload)
+        self.assertEqual(actual.model_dump(mode="json", exclude_unset=True), payload)
         text = json.dumps(payload, allow_nan=False)
         for field in ("account_id", "user_id", "email", "user_name", "price_context",
                       "position_start_price", "change_since_position_start"):
@@ -223,8 +223,10 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                  {"current_status": "wrong"}, {"current_status": [" "]},
                  {"current_status": ["x"] * 4}, {"watch_points": ["x"] * 4},
                  {"risk_factors": [True]}, {"limitations": None},
-                 {"disclaimer": "wrong"}, {"unexpected": "private-marker"}]
-        for field in BODY:
+                 {"disclaimer": "wrong"}, {"unexpected": "private-marker"},
+                 {"trend_guesses": ["x"] * 3}, {"trend_guesses": ["추정: 근거 없는 추정"]}]
+        # trend_guesses may be missing: AI Servers deployed before it never send the field.
+        for field in (name for name in BODY if name != "trend_guesses"):
             data = wire("luna", self.trace)
             data.pop(field)
             cases.append(data)
@@ -573,7 +575,7 @@ class EndpointTests(unittest.TestCase):
             return httpx.Response(200,json=data)
         def factory(**options):
             return RealAsyncClient(transport=httpx.MockTransport(handle),**options)
-        with patch.object(service.httpx,"AsyncClient",side_effect=factory),              patch.object(facts_service,"load_entry_price_context",AsyncMock(return_value=context)):
+        with patch.object(service.httpx,"AsyncClient",side_effect=factory),              patch.object(facts_service,"load_daily_rows",AsyncMock(return_value=[])),              patch.object(facts_service,"calculate_entry_price_context",Mock(return_value=context)):
             response=self.get(query="&profile=sol")
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()["entry_context"],["포지션 시작 직전 확인된 종가는 100원입니다."])

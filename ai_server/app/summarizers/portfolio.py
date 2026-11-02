@@ -57,6 +57,9 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
     if request.entry_price_context is not None:
         for field in ("return_5_sessions", "return_20_sessions", "opening_vs_prior_close_pct"):
             payload["entry_price_context"][field] = _prompt_percentage(getattr(request.entry_price_context, field))
+    if request.recent_trend is not None:
+        for field in ("change_rate_today", "return_5_sessions", "return_20_sessions"):
+            payload["recent_trend"][field] = _prompt_percentage(getattr(request.recent_trend, field))
     payload = _prompt_dates(request.model_dump(), payload)
     return (
         "시각과 날짜는 제공된 한국 시간 표현을 그대로 사용하고 ISO 형식이나 UTC 표기로 바꾸지 마세요. "
@@ -90,8 +93,14 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
         "사용자가 이 기사 때문에 매수했다거나 기사 이후 매수했다고 연결하지 마세요. 사용자 매수 이유 추정은 금지합니다. "
         "recent_issues는 최신 기사에 실제 존재하는 핵심 이슈 최대 3개이며 중복 이슈를 합치세요. "
         "recent_news가 비어 있으면 recent_issues는 빈 배열로 두고 뉴스 내용을 만들지 마세요. "
-        "뉴스와 주가 움직임의 인과관계는 생성하지 마세요. 기사 자체가 원인을 주장하더라도 이 버전은 "
-        "과거 뉴스·가격 시점 정합성이 없으므로 뉴스는 최근 이슈, 가격은 현재 보유상태로만 설명하세요. "
+        "trend_guesses 밖의 모든 섹션에서 뉴스와 주가 움직임의 인과관계는 생성하지 마세요. 기사 자체가 원인을 주장하더라도 "
+        "그 섹션들에서는 뉴스는 최근 이슈, 가격은 현재 보유상태로만 설명하세요. "
+        "trend_guesses는 recent_trend(오늘 등락률, 최근 5/20거래세션 수익률)와 recent_news를 함께 보고 "
+        "사람이 봐도 그렇게 추정될 만한 경우에만 최대 2개 작성하는 추정입니다. "
+        "각 문장은 '추정:'으로 시작하고, 기사 내용과 같은 시기의 가격 흐름을 나란히 제시한 뒤 "
+        "'~와 관련된 흐름으로 추정돼요'처럼 확인된 사실이 아니라 추정임을 분명히 밝히세요. "
+        "'때문에 올랐다/내렸다' 같은 단정, 사용자 매수 이유 추정, 앞으로의 주가 방향 전망, 매매 권유는 금지합니다. "
+        "recent_trend가 없거나 recent_news가 비어 있거나 기사와 가격 흐름의 연결이 약하면 빈 배열로 두세요. "
         "positive_factors/risk_factors는 입력 기사·사실에서 확인되는 긍정/주의 요인만 각각 최대 3개입니다. "
         "기사에 없는 일반론적 리스크나 주가 상승/하락 전망은 만들지 마세요. "
         "watch_points는 기사에서 이어지는 향후 확인할 점 최대 3개이며 투자 행동 지시가 아닙니다. "
@@ -109,14 +118,14 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
         "상승 확률, 수익 보장, 확정적 미래 예측은 금지합니다. "
         f"disclaimer는 '{PORTFOLIO_DISCLAIMER}'로 고정하고 본문에 면책문을 반복하지 마세요. "
         "headline, current_status, position_summary, recent_issues, positive_factors, risk_factors, "
-        "entry_context, watch_points, limitations, disclaimer만 포함한 JSON을 반환하세요.\n\n"
+        "entry_context, watch_points, limitations, trend_guesses, disclaimer만 포함한 JSON을 반환하세요.\n\n"
         + json.dumps(payload, ensure_ascii=False, allow_nan=False)
     )
 
 
 _WON = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?=\s*원)")
 TEXT_FIELDS = ("current_status", "entry_context", "position_summary", "recent_issues",
-               "positive_factors", "risk_factors", "watch_points", "limitations")
+               "positive_factors", "risk_factors", "watch_points", "limitations", "trend_guesses")
 
 
 def format_won(text: str) -> str:
@@ -135,5 +144,8 @@ def validate_portfolio_brief(brief: PortfolioBrief, request: PortfolioBriefReque
         raise ValueError("Unavailable position must not be reconstructed")
     if not request.recent_news and brief.recent_issues:
         raise ValueError("Missing news must not be reconstructed")
+    # Guesses need both a trend and articles, and must say they are guesses; anything else is dropped.
+    guesses = [text for text in brief.trend_guesses if "추정" in text] if request.recent_trend and request.recent_news else []
+    brief = brief.model_copy(update={"trend_guesses": guesses})
     return brief.model_copy(update={"headline": format_won(brief.headline),
                                     **{field: [format_won(text) for text in getattr(brief, field)] for field in TEXT_FIELDS}})

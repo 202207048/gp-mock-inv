@@ -234,3 +234,31 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(bridge.PortfolioBriefUnavailable) as caught:
                     await bridge.request_portfolio_brief("http://ai.test",self.bundle(),profile="luna",trace_id=trace)
             self.assertEqual(caught.exception.status_code,502)
+
+
+class RecentTrendTests(unittest.IsolatedAsyncioTestCase):
+    def test_trend_uses_latest_closes_and_keeps_today_rate_without_history(self):
+        trend = entry.calculate_recent_trend(bars(), Decimal("5.3"))
+        # closes run 100..124, so the last close is 124
+        self.assertEqual(trend.last_session_date, date(2026, 10, 20))
+        self.assertEqual(trend.return_5_sessions, (Decimal(124) / Decimal(119) - 1) * 100)
+        self.assertEqual(trend.return_20_sessions, (Decimal(124) / Decimal(104) - 1) * 100)
+        short = entry.calculate_recent_trend(bars(4), None)
+        self.assertIsNone(short.return_5_sessions)
+        broken = entry.calculate_recent_trend([{"date": "2026-10-20", "close": "NaN"}], Decimal("-1.2"))
+        self.assertEqual((broken.change_rate_today, broken.last_session_date), (Decimal("-1.2"), None))
+        self.assertIsNone(entry.calculate_recent_trend(None, None))
+
+    async def test_one_chart_read_feeds_entry_context_and_trend_and_reaches_the_ai_payload(self):
+        snapshot = PortfolioFactsSnapshot(1, "SYN001", "가상종목", 10, Decimal("100"), PositionReplayResult(position()))
+        loader = AsyncMock(return_value={"resolution": "1d", "rows": bars()})
+        with patch.object(entry, "get_chart_history", loader), \
+             patch.object(facts_service, "get_current_price", AsyncMock(return_value={"current_price": "130", "change_rate": "2.5"})), \
+             patch.object(facts_service, "get_news_by_symbol", AsyncMock(return_value=[])):
+            result = await facts_service.build_portfolio_facts(snapshot)
+        loader.assert_awaited_once()
+        self.assertTrue(result.entry_price_context.available)
+        self.assertEqual(result.recent_trend.change_rate_today, Decimal("2.5"))
+        payload = bridge.project_portfolio_brief(result)
+        self.assertEqual(payload["recent_trend"]["change_rate_today"], "2.5")
+        self.assertNotIn("recent_trend", bridge.project_portfolio_brief(facts()))

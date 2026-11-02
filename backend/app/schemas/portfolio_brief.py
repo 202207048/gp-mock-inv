@@ -76,6 +76,14 @@ class PriceContext(FactSchema):
     change_since_position_start: Decimal | None = Field(default=None, description="시작 시점 시장가격 대비 등락률(%). 과거 가격 미조회 시 null.")
 
 
+class RecentTrend(FactSchema):
+    """현재 시세 흐름: 오늘 등락률과 최근 일봉 종가 기준 5/20거래세션 수익률."""
+    change_rate_today: Decimal | None = Field(default=None, allow_inf_nan=False)
+    last_session_date: date | None = None
+    return_5_sessions: Decimal | None = Field(default=None, allow_inf_nan=False)
+    return_20_sessions: Decimal | None = Field(default=None, allow_inf_nan=False)
+
+
 class EntryPriceContext(FactSchema):
     available: bool
     reason: Literal["position_unavailable", "historical_price_unavailable"] | None = None
@@ -131,6 +139,7 @@ class PortfolioBriefFacts(FactSchema):
     price_context: PriceContext
     entry_price_context: EntryPriceContext = Field(default_factory=lambda: EntryPriceContext(
         available=False, reason="historical_price_unavailable"))
+    recent_trend: RecentTrend | None = None
     limitations: list[FactLimitation]
 
 
@@ -153,6 +162,8 @@ class PortfolioBriefBody(BaseModel):
     watch_points: list[BriefText] = Field(max_length=3)
     limitations: list[BriefText] = Field(max_length=3)
     disclaimer: Literal["모의투자 연습용 설명이며 투자 권유가 아닙니다."]
+    # Labelled guesses linking recent reports with the current trend; older saved briefings have none.
+    trend_guesses: list[BriefText] = Field(default_factory=list, max_length=2)
 
 
 class PortfolioBriefResponse(PortfolioBriefBody):

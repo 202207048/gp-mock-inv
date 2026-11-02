@@ -56,6 +56,7 @@ BRIEF = {
     "risk_factors": ["이번 분기 비용 증가가 확인됩니다."],
     "watch_points": ["다음 실적에서 계약 매출 반영과 비용 변화를 확인할 수 있습니다."],
     "limitations": ["과거 시점의 뉴스와 가격 흐름은 제공되지 않았습니다."],
+    "trend_guesses": [],
     "disclaimer": PORTFOLIO_DISCLAIMER,
 }
 MODELS = {"luna": ("gpt-6-luna", "none"), "sol": ("gpt-6.1-sol", "low")}
@@ -243,7 +244,7 @@ def test_output_schema_is_strict_bounded_and_disclaimer_is_fixed():
     assert set(schema["properties"]) == set(schema["required"]) == set(BRIEF)
     for name, value in BRIEF.items():
         if isinstance(value, list):
-            assert schema["properties"][name]["maxItems"] == 3
+            assert schema["properties"][name]["maxItems"] == (2 if name == "trend_guesses" else 3)
     for data in [{**BRIEF, "headline": " "}, {**BRIEF, "current_status": []},
                  {**BRIEF, "risk_factors": ["x"] * 4}, {**BRIEF, "extra": True},
                  {**BRIEF, "disclaimer": "different"}]:
@@ -640,7 +641,9 @@ def test_endpoint_optional_fact_absence_accepts_grounded_structured_output(api, 
         response = api[0].post(PATH, json=data)
     finally:
         main.app.dependency_overrides.pop(main.get_portfolio_brief_generator)
-    assert response.status_code == 200 and response.json() == {**brief, "provider": "openai", "model": "unit-test-model"}
+    # No recent trend was sent, so the guesses field is left out of the response.
+    expected = {key: value for key, value in brief.items() if key != "trend_guesses"}
+    assert response.status_code == 200 and response.json() == {**expected, "provider": "openai", "model": "unit-test-model"}
     call.assert_called_once()
 
 
@@ -801,3 +804,41 @@ def test_prompt_keeps_holding_numbers_out_of_the_headline():
     assert "가장 중요한 소식 한 가지만" in prompt
     assert "보유 숫자는 headline에 쓰지 말고" in prompt
     assert "1,420,000원" in prompt
+
+
+TREND = {"change_rate_today": "5.304", "last_session_date": "2026-10-30",
+         "return_5_sessions": "3.7", "return_20_sessions": "-1.25"}
+GUESS = "추정: 공급계약 보도가 나온 주에 주가도 5.3% 올라, 계약 기대와 관련된 흐름으로 추정돼요."
+
+
+def test_prompt_passes_the_recent_trend_and_asks_for_labelled_guesses_only():
+    prompt = build_portfolio_brief_prompt(PortfolioBriefRequest(**body(recent_trend=TREND)))
+    payload = json.loads(prompt.split("\n\n", 1)[1])
+    assert payload["recent_trend"] == {"change_rate_today": "5.3", "last_session_date": "2026년 10월 30일",
+                                       "return_5_sessions": "3.7", "return_20_sessions": "-1.25"}
+    assert "'추정:'으로 시작" in prompt
+    assert "trend_guesses 밖의 모든 섹션에서 뉴스와 주가 움직임의 인과관계는 생성하지 마세요" in prompt
+    assert "'때문에 올랐다/내렸다' 같은 단정" in prompt
+
+
+@pytest.mark.parametrize("cls", ADAPTERS)
+def test_guesses_need_a_trend_news_and_the_guess_label(cls):
+    brief = {**BRIEF, "trend_guesses": [GUESS, "공급계약 때문에 주가가 올랐습니다."]}
+    adapter, _ = fake_adapter(cls, brief=brief)
+    assert adapter.generate(PortfolioBriefRequest(**body(recent_trend=TREND))).trend_guesses == [GUESS]
+    adapter, _ = fake_adapter(cls, brief=brief)
+    assert adapter.generate(PortfolioBriefRequest(**REQUEST)).trend_guesses == []
+    adapter, _ = fake_adapter(cls, brief={**brief, "recent_issues": [], "headline": "보유 중입니다."})
+    no_news = body(recent_trend=TREND, recent_news=[], limitations=[*REQUEST["limitations"], "news_unavailable"])
+    assert adapter.generate(PortfolioBriefRequest(**no_news)).trend_guesses == []
+
+
+def test_endpoint_sends_guesses_only_to_backends_that_sent_a_trend(api, monkeypatch):
+    client, _ = api
+    brief = {**BRIEF, "trend_guesses": [GUESS]}
+    monkeypatch.setattr(profiles, "OpenAIPortfolioBriefGenerator", lambda **config: OpenAIPortfolioBriefGenerator(
+        **config, client=NS(responses=NS(parse=lambda **kwargs: NS(output_parsed=PortfolioBrief(**brief), usage=None)))))
+    old = client.post(PATH, json=body(profile="luna"))
+    assert old.status_code == 200 and "trend_guesses" not in old.json()
+    new = client.post(PATH, json=body(profile="luna", recent_trend=TREND))
+    assert new.status_code == 200 and new.json()["trend_guesses"] == [GUESS]

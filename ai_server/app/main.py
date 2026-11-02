@@ -236,7 +236,9 @@ def generate_portfolio_brief(
         outcome = generator.generate_with_metadata(request, trace_id=http_request.state.trace_id)
         metadata = profile_metadata(outcome.metadata, context)
         return PortfolioBriefResponse(
-            **outcome.result.model_dump(), provider=metadata.provider, model=metadata.model,
+            # Without a trend the field stays unset, so older Backends never receive it.
+            **outcome.result.model_dump(exclude=None if request.recent_trend else {"trend_guesses"}),
+            provider=metadata.provider, model=metadata.model,
             **({"ai": metadata} if request.include_ai_metadata else {}),
         )
     except SummarizerError as exc:
