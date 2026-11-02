@@ -95,11 +95,11 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
         "(recent_news가 3개면 entry_news 첫 기사는 [4]). "
         "entry_news_summary는 entry_news에 실제 있는 시작 무렵 사건만 최대 2개로 정리하고 기사 번호를 붙이세요. "
         "entry_news가 없으면 entry_news_summary는 빈 배열입니다. "
-        "entry_news가 있을 때만 trend_guesses에 '추정:'으로 시작하는 문장 1개를 더해, 시작 무렵 보도와 시작 직전 가격 흐름을 "
-        "나란히 두고 그 소식이 나오던 시기에 포지션이 시작돼 관련 소식을 보고 매수했을 수도 있다고 추정임을 밝혀 쓸 수 있습니다. "
+        "entry_news가 있을 때만 trend_guesses에 항목 1개를 더해, 시작 무렵 보도와 시작 직전 가격 흐름을 "
+        "나란히 두고 그 소식이 나오던 시기에 포지션이 시작돼 관련 소식을 보고 매수했을 수도 있다는 해석을 쓸 수 있습니다. "
         "이때도 좋은/나쁜 매수 평가와 단정은 금지합니다. "
         "사용자가 recent_news 기사 때문에 매수했다거나 기사 이후 매수했다고 연결하지 마세요. "
-        "trend_guesses의 entry_news 추정 문장 밖에서는 사용자 매수 이유 추정은 금지합니다. "
+        "trend_guesses의 entry_news 항목 밖에서는 사용자 매수 이유 추정은 금지합니다. "
         "recent_issues는 최신 기사에 실제 존재하는 핵심 이슈 최대 3개이며 중복 이슈를 합치세요. "
         "recent_news는 배열 순서대로 1번부터 번호가 있습니다. 기사에 근거한 headline, recent_issues, positive_factors, "
         "risk_factors, watch_points, trend_guesses, entry_news_summary 문장 끝에는 [1]처럼 근거 기사 번호를 붙이고 여러 개면 [1][3]처럼 이어 쓰세요. "
@@ -111,9 +111,11 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
         "trend_guesses 밖의 모든 섹션에서 뉴스와 주가 움직임의 인과관계는 생성하지 마세요. 기사 자체가 원인을 주장하더라도 "
         "그 섹션들에서는 뉴스는 최근 이슈, 가격은 현재 보유상태로만 설명하세요. "
         "trend_guesses는 recent_trend(오늘 등락률, 최근 5/20거래세션 수익률)와 recent_news를 함께 보고 "
-        "사람이 봐도 그렇게 추정될 만한 경우에만 최대 2개 작성하는 추정입니다. "
-        "각 문장은 '추정:'으로 시작하고, 기사 내용과 같은 시기의 가격 흐름을 나란히 제시한 뒤 "
-        "'~와 관련된 흐름으로 추정돼요'처럼 확인된 사실이 아니라 추정임을 분명히 밝히세요. "
+        "사람이 봐도 그렇게 볼 만한 경우에만 최대 2개 작성하는 해석입니다. 화면 제목이 이미 '추정'이므로 "
+        "'추정:' 접두어나 '추정돼요/추정됩니다' 같은 말을 반복하지 마세요. "
+        "각 항목은 2~3문장으로 ① 어떤 보도·사건이 있었는지 ② 그 사건이 회사나 업종의 무엇(수요, 실적, 투자심리 등)을 건드렸는지와 "
+        "같은 시기 주가·수익률이 어느 쪽으로 움직였는지 ③ 그래서 지금 흐름이 상승·하락·혼조 중 어느 쪽으로 기울어 보이는지 결론을 쓰세요. "
+        "문장은 '~로 보여요', '~일 수 있어요'처럼 해석임이 드러나는 말로 끝내세요. "
         "'때문에 올랐다/내렸다' 같은 단정, 사용자 매수 이유 추정, 앞으로의 주가 방향 전망, 매매 권유는 금지합니다. "
         "recent_trend가 없거나 recent_news가 비어 있거나 기사와 가격 흐름의 연결이 약하면 빈 배열로 두세요. "
         "positive_factors/risk_factors는 입력 기사·사실에서 확인되는 긍정/주의 요인만 각각 최대 3개입니다. "
@@ -138,6 +140,8 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
     )
 
 
+_GUESS_LABEL = re.compile(r"^\s*\[?추정\]?\s*[:：]\s*")
+_ADVICE = re.compile(r"(매수|매도|손절|익절)(하세요|하는 것이 좋|를 권|을 권)|(오를|내릴|상승할|하락할) (것|전망)|목표가")
 _CITE = re.compile(r"\s*\[(\d+)\]")
 _RANGE = re.compile(r"(?<=[\d원%])\s*~\s*(?=[-\d])")
 CITED_FIELDS = ("recent_issues", "positive_factors", "risk_factors", "watch_points", "trend_guesses", "entry_news_summary")
@@ -172,7 +176,9 @@ def validate_portfolio_brief(brief: PortfolioBrief, request: PortfolioBriefReque
         raise ValueError("Missing news must not be reconstructed")
     # Guesses need both a trend and articles, and must say they are guesses; anything else is dropped.
     grounded = (request.recent_trend and request.recent_news) or request.entry_news
-    guesses = [text for text in brief.trend_guesses if "추정" in text] if grounded else []
+    # The box title already says these are guesses; a repeated "추정:" label is dropped, advice lines are dropped entirely.
+    guesses = [_GUESS_LABEL.sub("", text) for text in brief.trend_guesses
+               if not _ADVICE.search(text)] if grounded else []
     brief = brief.model_copy(update={"trend_guesses": guesses,
                                      "entry_news_summary": brief.entry_news_summary if request.entry_news else []})
     articles = len(request.recent_news) + len(request.entry_news)

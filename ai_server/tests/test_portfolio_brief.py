@@ -809,7 +809,8 @@ def test_prompt_keeps_holding_numbers_out_of_the_headline():
 
 TREND = {"change_rate_today": "5.304", "last_session_date": "2026-10-30",
          "return_5_sessions": "3.7", "return_20_sessions": "-1.25"}
-GUESS = "추정: 공급계약 보도가 나온 주에 주가도 5.3% 올라, 계약 기대와 관련된 흐름으로 추정돼요."
+GUESS = ("공급계약 체결 보도가 나왔습니다. 계약은 매출 기대를 키우는 소식이고 같은 날 주가는 5.3% 올랐습니다. "
+         "최근 흐름은 상승 쪽으로 기울어 보여요.")
 
 
 def test_prompt_passes_the_recent_trend_and_asks_for_labelled_guesses_only():
@@ -817,14 +818,15 @@ def test_prompt_passes_the_recent_trend_and_asks_for_labelled_guesses_only():
     payload = json.loads(prompt.split("\n\n", 1)[1])
     assert payload["recent_trend"] == {"change_rate_today": "5.3", "last_session_date": "2026년 10월 30일",
                                        "return_5_sessions": "3.7", "return_20_sessions": "-1.25"}
-    assert "'추정:'으로 시작" in prompt
+    assert "'추정:' 접두어나 '추정돼요/추정됩니다' 같은 말을 반복하지 마세요" in prompt
+    assert "③ 그래서 지금 흐름이 상승·하락·혼조 중 어느 쪽으로 기울어 보이는지 결론" in prompt
     assert "trend_guesses 밖의 모든 섹션에서 뉴스와 주가 움직임의 인과관계는 생성하지 마세요" in prompt
     assert "'때문에 올랐다/내렸다' 같은 단정" in prompt
 
 
 @pytest.mark.parametrize("cls", ADAPTERS)
 def test_guesses_need_a_trend_news_and_the_guess_label(cls):
-    brief = {**BRIEF, "trend_guesses": [GUESS, "공급계약 때문에 주가가 올랐습니다."]}
+    brief = {**BRIEF, "trend_guesses": ["추정: " + GUESS, "앞으로 오를 것으로 보여 매수하세요."]}
     adapter, _ = fake_adapter(cls, brief=brief)
     assert adapter.generate(PortfolioBriefRequest(**body(recent_trend=TREND))).trend_guesses == [GUESS]
     adapter, _ = fake_adapter(cls, brief=brief)
@@ -874,11 +876,11 @@ ENTRY_NEWS = [{"title": "가상전자 신제품 공개", "summary": "신제품�
 @pytest.mark.parametrize("cls", ADAPTERS)
 def test_entry_news_summary_needs_entry_news_and_its_numbers_follow_recent_news(cls):
     brief = {**BRIEF, "entry_news_summary": ["시작 직전 신제품을 공개했습니다. [4][5]"],
-             "trend_guesses": ["추정: 신제품 공개 무렵 포지션이 시작돼 이 소식을 보고 매수했을 수도 있다고 추정돼요. [4]"]}
+             "trend_guesses": ["신제품 공개 무렵 포지션이 시작돼 이 소식을 보고 매수했을 수도 있어요. [4]"]}
     adapter, _ = fake_adapter(cls, brief=brief)
     result = adapter.generate(PortfolioBriefRequest(**body(entry_news=ENTRY_NEWS)))
     assert result.entry_news_summary == ["시작 직전 신제품을 공개했습니다. [4]"]
-    assert result.trend_guesses == ["추정: 신제품 공개 무렵 포지션이 시작돼 이 소식을 보고 매수했을 수도 있다고 추정돼요. [4]"]
+    assert result.trend_guesses == ["신제품 공개 무렵 포지션이 시작돼 이 소식을 보고 매수했을 수도 있어요. [4]"]
     adapter, _ = fake_adapter(cls, brief=brief)
     plain = adapter.generate(PortfolioBriefRequest(**REQUEST))
     assert (plain.entry_news_summary, plain.trend_guesses) == ([], [])
