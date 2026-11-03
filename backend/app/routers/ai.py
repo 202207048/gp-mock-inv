@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 
 from app.schemas.news_analysis import NewsAnalysisRequest, NewsAnalysisResponse
 from app.services.news_analysis_service import analyze_news, NewsAnalysisUnavailable
+from app.schemas.term_detect import TermDetectRequest, TermDetectResponse
+from app.services.term_detect_service import TermDetectUnavailable, detect_terms
 from app.config import settings
 from app.schemas.pattern_brief import PatternFacts, PatternBrief, PatternPublicResponse, attach_comparison_notes, PatternGenerateRequest, PatternInsufficient
 from app.services.pattern_brief_service import build_pattern_facts
@@ -634,6 +636,15 @@ async def news_analysis(body: NewsAnalysisRequest, user: User = Depends(get_curr
     try:
         return await analyze_news(body)
     except NewsAnalysisUnavailable as exc:
+        raise HTTPException(exc.status_code, detail=str(exc)) from None
+
+
+@router.post("/term-detect", response_model=TermDetectResponse)
+async def term_detect(body: TermDetectRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """화면에서 읽은 글 속 어려운 말을 AI로 찾는다. 글만 보내고 그림은 보내지 않는다."""
+    try:
+        return await detect_terms(body, user.user_id, db)
+    except TermDetectUnavailable as exc:
         raise HTTPException(exc.status_code, detail=str(exc)) from None
 
 
