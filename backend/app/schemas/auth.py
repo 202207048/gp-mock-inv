@@ -15,6 +15,13 @@ Pydantic 스키마(Schema)란?
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from app.schemas.community import PostCreateRequest
 
+LOGIN_ID_PATTERN = r"^[A-Za-z0-9_]{4,20}$"
+
+
+class LoginIdAvailabilityResponse(BaseModel):
+    login_id: str
+    available: bool
+
 
 class ProfileUpdateRequest(BaseModel):
     user_name: str = Field(min_length=1, max_length=50)
@@ -52,7 +59,7 @@ class RegisterRequest(BaseModel):
         "email": "hong@example.com"
     }
     """
-    login_id: str       # 로그인 아이디
+    login_id: str = Field(min_length=4, max_length=20, pattern=LOGIN_ID_PATTERN)
     passwd: str         # 비밀번호 (원문, 서버에서 해싱)
     user_name: str      # 사용자 이름
     email: EmailStr     # 이메일 (EmailStr: 형식 자동 검증)

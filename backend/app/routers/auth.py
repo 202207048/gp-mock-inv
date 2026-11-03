@@ -15,12 +15,14 @@ prefix="/auth": 모든 경로 앞에 /auth 가 자동으로 붙음
 tags=["인증"]: /docs 페이지에서 이 API들이 "인증" 그룹으로 묶임
 """
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
 from app.schemas.auth import (
+    LOGIN_ID_PATTERN,
+    LoginIdAvailabilityResponse,
     DeleteUserRequest,
     InvestmentSurveyRequest,
     LoginRequest,
@@ -38,6 +40,17 @@ from app.utils.deps import get_current_user
 # prefix는 main.py에서 /api/users 로 지정하므로 여기선 비워둠
 # 최종 경로 예시: /api/users/register, /api/users/login
 router = APIRouter(tags=["사용자/인증"])
+
+
+@router.get('/check-login-id', response_model=LoginIdAvailabilityResponse, summary='아이디 중복확인')
+def check_login_id(
+    response: Response,
+    login_id: str = Query(min_length=4, max_length=20, pattern=LOGIN_ID_PATTERN),
+    db: Session = Depends(get_db),
+):
+    response.headers['Cache-Control'] = 'no-store'
+    exists = db.query(User.user_id).filter(User.login_id == login_id).first() is not None
+    return LoginIdAvailabilityResponse(login_id=login_id, available=not exists)
 
 
 @router.put('/me', response_model=UserResponse, summary='프로필 수정')
