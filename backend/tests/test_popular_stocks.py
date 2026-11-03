@@ -35,6 +35,12 @@ class PopularStocksTests(unittest.IsolatedAsyncioTestCase):
             fetch.assert_awaited_once()
             self.assertEqual(fetch.call_args.kwargs['params']['orderType'], 'searchTop')
 
+    def test_signed_rates_zero_and_missing_values(self):
+        for raw, expected in [('+2.31', 2.31), ('-1.25', -1.25), ('0', 0),
+                              (None, None), ('', None), ('NaN', None), ('Infinity', None)]:
+            rows = service.parse_ranking([{'itemcode': '005930', 'itemname': 'Samsung', 'prevChangeRate': raw}])
+            self.assertEqual(rows[0]['change_rate'], expected)
+
     async def test_failure_clears_old_ranking_and_backs_off(self):
         service._rows = [{'rank': 1, 'symbol_code': '005930', 'name': 'old'}]
         with patch.object(httpx.AsyncClient, 'get', new=AsyncMock(side_effect=httpx.ConnectError('offline'))) as fetch:

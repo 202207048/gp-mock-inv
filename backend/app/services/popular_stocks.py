@@ -1,5 +1,6 @@
 """Public Naver search ranking with a shared, short-lived cache."""
 import asyncio
+import math
 import re
 import time
 
@@ -25,7 +26,14 @@ def parse_ranking(payload):
         if code in seen or not isinstance(name, str) or not name.strip():
             continue
         seen.add(code)
-        rows.append({'rank': position, 'symbol_code': code, 'name': name.strip()})
+        try:
+            change_rate = float(str(item.get('prevChangeRate', '')).replace(',', ''))
+            if not math.isfinite(change_rate):
+                change_rate = None
+        except (TypeError, ValueError):
+            change_rate = None
+        rows.append({'rank': position, 'symbol_code': code, 'name': name.strip(),
+                     'change_rate': change_rate})
     if not rows:
         raise ValueError('Empty ranking')
     return rows
