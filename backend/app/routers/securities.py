@@ -28,6 +28,7 @@ from app.services.kis_service import (
     get_listed_stock,
     get_stock_chart,
     get_stock_ranking,
+    STOCK_RANKING_TYPES,
     search_listed_stocks,
 )
 from app.services.chart_history import ChartUnavailable, get_chart_history
@@ -108,6 +109,9 @@ async def get_ranking(
         - volume  → 거래량 상위
         - change  → 급등 상위 (상승률 기준)
         - amount  → 거래대금 상위
+        - decline → 급하락 (하락률 기준)
+        - market_cap → 시가총액 상위
+        - volume_surge → 거래량 급증 (거래량 증가율 기준)
 
     응답 예시:
         [
@@ -124,10 +128,10 @@ async def get_ranking(
 
     KIS_REAL_APP_KEY 가 설정되지 않았거나 장 마감 시간이면 빈 배열이 반환됩니다.
     """
-    if rank_type not in ("volume", "change", "amount"):
+    if rank_type not in STOCK_RANKING_TYPES:
         raise HTTPException(
             status_code=400,
-            detail="rank_type은 volume, change, amount 중 하나여야 합니다.",
+            detail="지원하는 순위: " + ", ".join(sorted(STOCK_RANKING_TYPES)),
         )
     return await get_stock_ranking(rank_type, limit)
 

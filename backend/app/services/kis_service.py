@@ -411,6 +411,20 @@ async def get_stock_chart(symbol_code: str, period: str = "D") -> list[dict]:
 
 # ── 종목 순위 조회 (실전투자 키) ──────────────────────────────
 
+STOCK_RANKING_TYPES = frozenset({"volume", "change", "amount", "decline", "market_cap", "volume_surge"})
+
+
+def _ranking_number(value, integer=False):
+    """Missing/invalid provider fields stay missing rather than turning into zero."""
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+        return (int(number) if integer else number) if math.isfinite(number) else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[dict]:
     """
     국내 주식 종목 순위를 조회한다. (실전 API 전용)
@@ -420,6 +434,9 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
             "volume"   — 거래량 상위 (FHPST01710000)
             "change"   — 급등 상위   (FHPST01700000, 상승 기준)
             "amount"   — 거래대금 상위 (FHPST01710000, 거래대금 기준)
+            "decline"  — 하락률 상위 (FHPST01700000)
+            "market_cap" — 시가총액 상위 (FHPST01740000)
+            "volume_surge" — 거래량 증가율 상위 (FHPST01710000)
         limit: 반환할 종목 수 (최대 30)
 
     Returns:
@@ -435,6 +452,9 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
             ...
         ]
     """
+    if rank_type not in STOCK_RANKING_TYPES:
+        raise ValueError("Unsupported stock ranking type")
+    limit = max(1, min(int(limit), 30))
     if not settings.KIS_REAL_APP_KEY:
         return []
 
@@ -442,14 +462,14 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
     # volume / amount 는 같은 API를 쓰되, FID_BLNG_CLS_CODE 만 다르게 보낸다.
     #   0 = 평균거래량(인기 종목)  3 = 거래금액순(거래대금)
     # change 는 등락률 API라 파라미터 구조가 다르다. 기존 값은 그대로 둔다.
-    if rank_type == "change":
+    if rank_type in ("change", "decline"):
         tr_id = "FHPST01700000"
         path = "/uapi/domestic-stock/v1/ranking/fluctuation"
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_COND_SCR_DIV_CODE": "20170",
             "FID_INPUT_ISCD": "0000",
-            "FID_RANK_SORT_CLS_CODE": "0",   # 0 = 상승률 순
+            "FID_RANK_SORT_CLS_CODE": "1" if rank_type == "decline" else "0",
             "FID_INPUT_CNT_1": "0",
             "FID_PRC_CLS_CODE": "0",
             "FID_INPUT_PRICE_1": "",
@@ -460,6 +480,20 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
             "FID_DIV_CLS_CODE": "0",
             "FID_RSFL_RATE1": "",
             "FID_RSFL_RATE2": "",
+        }
+    elif rank_type == "market_cap":
+        tr_id = "FHPST01740000"
+        path = "/uapi/domestic-stock/v1/ranking/market-cap"
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_SCR_DIV_CODE": "20174",
+            "FID_INPUT_ISCD": "0000",
+            "FID_DIV_CLS_CODE": "0",
+            "FID_TRGT_CLS_CODE": "0",
+            "FID_TRGT_EXLS_CLS_CODE": "0",
+            "FID_INPUT_PRICE_1": "",
+            "FID_INPUT_PRICE_2": "",
+            "FID_VOL_CNT": "",
         }
     elif rank_type == "amount":
         tr_id = "FHPST01710000"
@@ -485,7 +519,7 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_COND_SCR_DIV_CODE": "20171",
             "FID_INPUT_ISCD": "0000",
-            "FID_BLNG_CLS_CODE": "0",  # 평균거래량
+            "FID_BLNG_CLS_CODE": "1" if rank_type == "volume_surge" else "0",
             "FID_TRGT_CLS_CODE": "111111111",
             "FID_TRGT_EXLS_CLS_CODE": "000000",
             "FID_INPUT_PRICE_1": "",
@@ -521,22 +555,38 @@ async def get_stock_ranking(rank_type: str = "volume", limit: int = 10) -> list[
                 return []
             raw = resp.json()
             print(f"[KIS 순위 응답] type={rank_type} rt_cd={raw.get('rt_cd')} msg={raw.get('msg1')} keys={list(raw.keys())}")
+            if str(raw.get("rt_cd", "0")) != "0":
+                raise RuntimeError("Stock ranking provider rejected the request")
             output = raw.get("output", raw.get("output1", []))
+            if not isinstance(output, list):
+                raise RuntimeError("Invalid stock ranking provider response")
     except Exception as e:
         print(f"[KIS 순위 요청 오류] {e}")
         return []
 
     result = []
     for i, item in enumerate(output[:limit]):
+        if not isinstance(item, dict):
+            continue
         try:
+            code = item.get("mksc_shrn_iscd", item.get("stck_shrn_iscd", ""))
+            name = item.get("hts_kor_isnm", "")
+            if not code or not name:
+                continue
+            price = _ranking_number(item.get("stck_prpr"), integer=True)
+            shares = _ranking_number(item.get("lstn_stcn"), integer=True)
             result.append({
                 "rank": i + 1,
-                "symbol_code": item.get("mksc_shrn_iscd", item.get("stck_shrn_iscd", "")),
-                "name": item.get("hts_kor_isnm", ""),
-                "price": int(item.get("stck_prpr", 0)),
-                "change_rate": float(item.get("prdy_ctrt", 0)),
-                "volume": int(item.get("acml_vol", 0)),
-                "amount": int(item.get("acml_tr_pbmn", 0)),  # 거래대금
+                "symbol_code": code,
+                "name": name,
+                "price": price,
+                "change_rate": _ranking_number(item.get("prdy_ctrt")),
+                "volume": _ranking_number(item.get("acml_vol"), integer=True),
+                "amount": _ranking_number(item.get("acml_tr_pbmn"), integer=True),
+                # 원 단위. Provider's abbreviated stck_avls has no unit in the
+                # published mapping; price × listed shares avoids a unit guess.
+                "market_cap": price * shares if price is not None and price > 0 and shares is not None and shares > 0 else None,
+                "volume_increase_rate": _ranking_number(item.get("vol_inrt")),
             })
         except (ValueError, TypeError):
             continue
