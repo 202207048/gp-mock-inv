@@ -32,6 +32,7 @@ from app.services.kis_service import (
 )
 from app.services.chart_history import ChartUnavailable, get_chart_history
 from app.services.market_details import get_market_details
+from app.services.popular_stocks import get_popular_stocks
 from app.routers.stock_logos import router as stock_logos_router
 
 # prefix는 main.py에서 /api/stocks 로 지정
@@ -129,6 +130,11 @@ async def get_ranking(
             detail="rank_type은 volume, change, amount 중 하나여야 합니다.",
         )
     return await get_stock_ranking(rank_type, limit)
+
+
+@router.get('/popular-searches', summary='네이버 인기 검색 종목')
+async def popular_searches():
+    return await get_popular_stocks()
 
 
 @router.get("/{symbol_code}", response_model=SecurityResponse, summary="종목 상세 조회")
