@@ -190,6 +190,25 @@ async def stop_misu_monitor():
 
 
 # 서버 상태 확인용 기본 API: http://localhost:8000/
+@app.on_event('startup')
+async def start_asset_history_monitor():
+    from sqlalchemy import inspect
+    from app.services.asset_history_monitor import monitor as asset_monitor
+    if not inspect(engine).has_table('asset_history'):
+        logging.getLogger(__name__).warning('Asset history unavailable: run alembic upgrade head')
+        return
+    app.state.asset_history_monitor = asyncio.create_task(asset_monitor())
+
+
+@app.on_event('shutdown')
+async def stop_asset_history_monitor():
+    task = getattr(app.state, 'asset_history_monitor', None)
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
 @app.get("/", tags=["상태확인"])
 def root():
     """서버가 정상 실행 중인지 확인하는 API."""

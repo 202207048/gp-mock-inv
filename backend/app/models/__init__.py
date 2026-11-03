@@ -1,5 +1,6 @@
 from app.models.user import User
 from app.models.account import Account
+from app.models.asset_history import AssetHistory
 from app.models.security import ItemMaster
 from app.models.order import Order
 from app.models.order_automation import OrderAutomation
@@ -14,6 +15,7 @@ from app.models.ai_brief_result import AiBriefResult
 from app.models.ai_brief_report import AiBriefReport
 
 __all__ = [
+    "AssetHistory",
     "AiBriefResult",
     "AiBriefReport",
     "User",

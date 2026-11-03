@@ -27,6 +27,21 @@ from app.utils.deps import get_current_user
 router = APIRouter(tags=["거래"])
 
 
+@router.get('/history', summary='계좌 자산 이력 주간 조회')
+def asset_history(account_id: int = Query(..., gt=0), week_offset: int = Query(0, ge=0, le=520),
+                  current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.services.asset_history_service import read_asset_week
+    return read_asset_week(db, account_id, current_user.user_id, week_offset)
+
+
+@router.post('/history/snapshot', summary='서버 평가금액으로 오늘의 자산 이력 저장')
+async def save_asset_history(account_id: int = Query(..., gt=0),
+                             current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.services.asset_history_service import record_asset_history, read_asset_week
+    await record_asset_history(db, account_id, current_user.user_id)
+    return read_asset_week(db, account_id, current_user.user_id)
+
+
 @router.get("", summary="보유 종목(포트폴리오) 조회")
 def get_portfolio(
     account_id: int = Query(..., description="계좌 번호"),
