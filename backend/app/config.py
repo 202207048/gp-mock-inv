@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     # JWT 암호화 방식 (HS256이 표준)
     ALGORITHM: str = "HS256"
 
-    # 로그인 토큰 유효 시간 (분 단위, 기본 60분 = 1시간)
+    # 로그인 토큰 유효 시간 (분 단위, 기본 180분 = 3시간)
     # 이 시간이 지나면 자동 로그아웃됨
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 180
 
     # 한국투자증권 오픈API — 모의투자 키 (시세·차트 조회용)
     # https://apiportal.koreainvestment.com 에서 발급

@@ -9,6 +9,7 @@ from app.models import (
 )
 from app.models.misu import MisuDebt, MisuPayment, MisuSettlement
 from app.models.community import PostVote
+from app.models.favorites import FavoriteLibrary
 from app.utils.security import verify_password
 
 
@@ -36,6 +37,7 @@ def withdraw_user(db: Session, user_id: int, passwd: str) -> None:
         db.execute(delete(Follow).where(or_(Follow.follower_id == user_id, Follow.following_id == user_id)))
         for model in (UserSurveyResponse, AiPropensityAdvice):
             db.execute(delete(model).where(model.user_id == user_id))
+        db.execute(delete(FavoriteLibrary).where(FavoriteLibrary.user_id == user_id))
         db.execute(delete(User).where(User.user_id == user_id))
         db.commit()
     except Exception:

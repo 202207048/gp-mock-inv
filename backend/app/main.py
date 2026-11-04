@@ -26,6 +26,8 @@ from sqlalchemy import text
 from app.database import engine
 from app.config import settings
 from app.routers import order_automations, misu
+from app.routers import favorites
+from app.models.favorites import FavoriteLibrary
 from app.services.misu_monitor import monitor as misu_monitor
 from app.services.order_automation_service import monitor
 
@@ -99,6 +101,12 @@ app.add_middleware(
 
 # 사용자/인증: 회원가입, 로그인, 내 정보, 투자성향 저장
 app.include_router(auth.router, prefix="/api/users", tags=["사용자/인증"])
+app.include_router(favorites.router, prefix="/api/users/me/favorites", tags=["관심종목"])
+
+
+@app.on_event('startup')
+def ensure_favorite_library():
+    FavoriteLibrary.__table__.create(bind=engine, checkfirst=True)
 
 # AI/설문: 투자성향 설문 제출, 결과 조회, AI 코치, 종목추천
 app.include_router(ai.router, prefix="/api/ai", tags=["AI/설문"])
