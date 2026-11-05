@@ -8,13 +8,13 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.term_schemas import TermDetectRequest,TermDetectResponse
 from app.term_routes import get_detector
-from app.summarizers.terms import build_term_prompt,sanitize_term_output
+from app.summarizers.terms import plain_meaning, build_term_prompt,sanitize_term_output
 from app.summarizers.terms_openai import TermDetector
 from app.summarizers.base import SummarizerError
 
 TEXT='호재가 겹치며 거래량이 늘었다. 행사는 성료됐다.'
 DATA=dict(text=TEXT,known=['거래량'],companies=[])
-def row(term,tier='invest',meaning='주가에 좋은 소식이에요.',basic=False,**facts):return dict(term=term,tier=tier,meaning=meaning,basic=basic,basis='knowledge',listing='',index='',sector='',size='',**facts)
+def row(term,tier='invest',meaning='주가에 좋은 소식이에요.',basic=False,**facts):return dict(term=term,tier=tier,meaning=meaning,basic=basic,basis='knowledge',listing='',index='',sector='',size='',group='',parent='',**facts)
 
 def test_strict_schema():
  with pytest.raises(ValidationError):TermDetectRequest(**DATA,extra='bad')
@@ -67,13 +67,13 @@ def test_company_facts_and_context_basis():
  text="PG사 '페이허브'가 해킹으로 2억원 유출. 엔비디아 호재도 언급."
  req=TermDetectRequest(text=text)
  rows=[{**row('페이허브','company','이 글에서는 2억원이 유출된 PG사로 소개돼요.'),'basis':'context'},
-  {**row('엔비디아','company','AI용 반도체를 설계하는 미국 기업이에요.'),'listing':'미국 나스닥','index':'S&P 500 · 나스닥 100','sector':'반도체','size':'초대형'},
+  {**row('엔비디아','company','AI용 반도체를 설계하는 미국 기업이에요.'),'listing':'미국 나스닥','index':'S&P 500 · 나스닥 100','sector':'반도체','size':'대기업'},
   {**row('PG사','company','이 글에서는 5억원 피해 회사로 나와요.'),'basis':'context'},
   {**row('호재'),'listing':'코스피','size':'대형'}]
  out=sanitize_term_output({'terms':rows},req)['terms']
  assert [t['term'] for t in out]==['페이허브','엔비디아','호재']
  assert out[0]['basis']=='context'
- assert (out[1]['listing'],out[1]['index'],out[1]['sector'],out[1]['size'])==('미국 나스닥','S&P 500 · 나스닥 100','반도체','초대형')
+ assert (out[1]['listing'],out[1]['index'],out[1]['sector'],out[1]['size'])==('미국 나스닥','S&P 500 · 나스닥 100','반도체','대기업')
  assert (out[2]['listing'],out[2]['size'])==('','')
 
 def test_normalization_dedup_and_injection_are_safe():
@@ -96,9 +96,34 @@ def test_limits_and_context_numbers():
        {**row(names[1],'company','글에서 2억원 피해 회사예요.'),'basis':'context'},
        {**row(names[2],'company','글에서 9876억원 피해 회사예요.'),'basis':'context'}]
  assert [v['term'] for v in sanitize_term_output({'terms':rows},req)['terms']]==[names[1]]
- assert company_facts({'listing':'코스피2','sector':'반도체3','index':'S&P 500','size':'잘못'})=={'listing':'','index':'S&P 500','sector':'','size':''}
+ assert company_facts({'listing':'코스피2','sector':'반도체3','index':'S&P 500','size':'잘못'})=={'listing':'','index':'S&P 500','sector':'','size':'','group':'','parent':''}
 
 def test_context_number_must_be_a_complete_number_in_source():
  req=TermDetectRequest(text='가온기업의 피해는 12억원입니다.')
  candidate={**row('가온기업','company','글에서는 2억원 피해가 있었어요.'),'basis':'context'}
  assert sanitize_term_output({'terms':[candidate]},req)['terms']==[]
+
+
+def test_frame_sentences_are_removed_and_group_kept():
+ text="본시스템즈는 국내 로봇 부품 중소기업이다. 현대백화점이 7% 급등했다."
+ req=TermDetectRequest(text=text)
+ rows=[{**row('본시스템즈','company','이 글에서는 로봇 부품 전문기업으로 소개돼요.'),'basis':'context','sector':'로봇 부품','size':'중소'},
+  {**row('현대백화점','company','백화점과 면세점을 운영하는 유통 기업이에요.'),'group':'현대백화점그룹','size':'대기업','parent':'2'},
+  {**row('급등','invest','이 글에서는 주가가 짧은 시간에 크게 오른 것을 가리켜요.'),'group':'삼성그룹'}]
+ out=sanitize_term_output({'terms':rows},req)['terms']
+ assert out[0]['meaning']=='로봇 부품 전문기업이에요.'
+ assert (out[0]['sector'],out[0]['size'])==('로봇 부품','중소')
+ assert (out[1]['group'],out[1]['parent'],out[1]['size'])==('','','대기업')
+ assert out[2]['meaning']=='주가가 짧은 시간에 크게 오른 것을 가리켜요.'
+ assert out[2]['group']==''
+ assert plain_meaning('글에서는 핀테크 업체로 소개돼요')=='핀테크 업체예요.'
+
+
+def test_search_mode_explains_only_the_searched_word():
+ req=TermDetectRequest(text='듀레이션',ask=True)
+ prompt=build_term_prompt(req)
+ assert prompt.startswith('text는') and '하나만' in prompt
+ assert not build_term_prompt(TermDetectRequest(text='듀레이션')).startswith('text는')
+ rows=[row('듀레이션','invest','채권 투자금을 돌려받는 평균 기간이에요.'),row('듀레','invest','다른 말이에요.')]
+ out=sanitize_term_output({'terms':rows},req)['terms']
+ assert [t['term'] for t in out]==['듀레이션']

@@ -18,7 +18,7 @@ class FakeDb:
 
     def query(self, column, *more):
         stored = self.stored
-        if column.key == "name":
+        if column.key == "name" and not more:
             return SimpleNamespace(all=lambda: [(name,) for name in stored])
         class Query:
             def filter(self, condition):
@@ -46,7 +46,9 @@ class TermDetectTests(unittest.TestCase):
         self.terms = [{"term": "호재", "tier": "invest", "meaning": "좋은 소식이에요."},
                       {"term": "없는말", "tier": "general", "meaning": "글에 없어요."}]
         self.searched = []
+        self.by_code = {}
         self.sent = []
+        self.asked = []
         service._names.update(at=None, names=[])
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
@@ -65,12 +67,16 @@ class TermDetectTests(unittest.TestCase):
         if isinstance(self.failure, int):
             return httpx.Response(self.failure, json={})
         sent = json.loads(req.content)
-        self.assertEqual(set(sent), {"text", "known", "companies"})
+        # ask는 검색할 때만 보낸다. 예전 AI 서버도 받을 수 있게.
+        self.assertIn(set(sent), ({"text", "known", "companies"}, {"text", "known", "companies", "ask"}))
+        self.asked.append(sent.get("ask"))
         self.sent.append(sent["companies"])
         return httpx.Response(200, json={"terms": self.terms})
 
     async def search(self, keyword, limit):
         self.searched.append(keyword)
+        if keyword in self.by_code:
+            return [{"symbol_code": keyword, "name": self.by_code[keyword], "market_type": "국내주식"}]
         return [{"symbol_code": "000660", "name": "SK하이닉스"}, {"symbol_code": "035420", "name": "NAVER"}]
 
     def post(self, body=BODY):
@@ -80,7 +86,7 @@ class TermDetectTests(unittest.TestCase):
         res = self.post()
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json(), {"terms": [{"term": "호재", "tier": "invest", "meaning": "좋은 소식이에요.", "basic": False, "basis": "knowledge",
-                                                   "listing": "", "index": "", "sector": "", "size": "", "listing_checked": False, "symbol_code": None}]})
+                                                   "listing": "", "index": "", "sector": "", "size": "", "group": "", "parent": "", "listing_checked": False, "symbol_code": None}]})
 
     def test_company_names_link_only_exact_listed_stocks(self):
         body = {"text": "삼성전자와 SK 하이닉스, 하이닉스와 엔비디아", "known": []}
@@ -148,3 +154,26 @@ class TermDetectTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([t["term"] for t in response.json()["terms"]], ["하이닉스"])
         self.assertIsNone(response.json()["terms"][0]["symbol_code"])
+
+    def test_names_next_to_stock_codes_become_listed_companies(self):
+        # 순위표: 이름 옆에 6자리 종목 코드. AI가 빠뜨려도 종목 데이터로 채운다.
+        self.by_code = {"004540": "깨끗한나라", "276730": "한울앤제주", "999999": "글에없는회사"}
+        self.terms = [{"term": "급상승", "tier": "invest", "meaning": "빠르게 오른 종목이에요.", "extra_field": "무시"}]
+        text = "급상승 4 깨끗한나라 004540 5 한울앤제주 276730 거래 999999 1,293,000"
+        res = self.post({"text": text, "known": []})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(self.sent[-1][:2], ["깨끗한나라", "한울앤제주"])
+        rows = {t["term"]: t for t in res.json()["terms"]}
+        self.assertEqual(rows["깨끗한나라"]["symbol_code"], "004540")
+        self.assertEqual((rows["한울앤제주"]["basis"], rows["한울앤제주"]["meaning"]), ("data", "국내 증시에 상장된 국내 기업이에요."))
+        self.assertNotIn("글에없는회사", rows)
+        self.assertNotIn("293000", self.searched)
+
+    def test_search_asks_for_one_word_and_is_cached_apart(self):
+        self.terms = [{"term": "호재", "tier": "invest", "meaning": "주가에 좋은 소식이에요."}]
+        self.post({"text": "호재", "known": []})
+        res = self.post({"text": "호재", "known": [], "ask": True})
+        self.post({"text": "호재", "known": [], "ask": True})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(self.asked, [None, True])
+        self.assertEqual(res.json()["terms"][0]["term"], "호재")
