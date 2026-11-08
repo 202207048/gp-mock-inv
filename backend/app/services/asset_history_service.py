@@ -75,5 +75,23 @@ def read_asset_week(db, account_id, user_id, week_offset=0, now=None):
     end = start + timedelta(days=6)
     rows = db.query(AssetHistory).filter(AssetHistory.account_id == account_id,
         AssetHistory.date >= start, AssetHistory.date <= end).order_by(AssetHistory.date).all()
+    previous = db.query(AssetHistory).filter(AssetHistory.account_id == account_id,
+        AssetHistory.date < start, AssetHistory.is_demo.is_(False)).order_by(AssetHistory.date.desc()).first()
     return dict(account_id=account_id, week_start=start, week_end=end, timezone='Asia/Seoul',
+        previous=dict(date=previous.date, total=previous.total, is_demo=False) if previous else None,
         rows=[dict(date=row.date, observed_at=row.observed_at, total=row.total, is_demo=row.is_demo) for row in rows])
+
+
+def read_asset_range(db, account_id, user_id, start, end, now=None):
+    owned_account(db, account_id, user_id)
+    today = (now or datetime.now(timezone.utc)).astimezone(KST).date()
+    earliest = today - timedelta(days=today.weekday(), weeks=520)
+    if start > end or end > today or start < earliest:
+        raise HTTPException(422, '조회 기간을 확인해 주세요.')
+    rows = db.query(AssetHistory).filter(AssetHistory.account_id == account_id,
+        AssetHistory.date >= start, AssetHistory.date <= end).order_by(AssetHistory.date).all()
+    previous = db.query(AssetHistory).filter(AssetHistory.account_id == account_id,
+        AssetHistory.date < start, AssetHistory.is_demo.is_(False)).order_by(AssetHistory.date.desc()).first()
+    return dict(account_id=account_id, start_date=start, end_date=end, timezone='Asia/Seoul',
+        previous=dict(date=previous.date, total=previous.total, is_demo=False) if previous else None,
+        rows=[dict(date=row.date, total=row.total, is_demo=row.is_demo) for row in rows])

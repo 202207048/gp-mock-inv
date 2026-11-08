@@ -143,3 +143,39 @@ class AssetHistoryTests(unittest.TestCase):
         self.assertEqual(self.quote.await_count, 1)
         with self.Session() as db:
             self.assertEqual(db.query(AssetHistory).count(), 3)
+
+    def test_previous_record_crosses_empty_weeks_and_stays_account_scoped(self):
+        now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
+        with self.Session() as db:
+            for account, days, demo in [(1, 30, False), (1, 20, False), (1, 10, True), (2, 8, False)]:
+                stamp = now - timedelta(days=days)
+                db.add(AssetHistory(account_id=account, date=stamp.date(), observed_at=stamp,
+                    cash=100, market=0, debt=0, pending_proceeds=0, total=100, is_demo=demo))
+            db.commit()
+            result = service.read_asset_week(db, 1, 1, now=now)
+            self.assertEqual(result['rows'], [])
+            self.assertEqual(result['previous']['date'], (now - timedelta(days=20)).date())
+            self.assertIsNone(service.read_asset_week(db, 3, 1, now=now)['previous'])
+            self.assertIsNone(service.read_asset_week(db, 1, 1, week_offset=10, now=now)['previous'])
+
+    def test_range_validation_and_cross_week_records(self):
+        now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
+        with self.Session() as db:
+            for days in [30, 10, 2]:
+                stamp = now - timedelta(days=days)
+                db.add(AssetHistory(account_id=1, date=stamp.date(), observed_at=stamp,
+                    cash=100, market=0, debt=0, pending_proceeds=0, total=100 + days, is_demo=False))
+            db.commit()
+            start, end = (now - timedelta(days=15)).date(), now.date()
+            result = service.read_asset_range(db, 1, 1, start, end, now=now)
+            self.assertEqual(len(result['rows']), 2)
+            self.assertEqual(result['previous']['date'], (now - timedelta(days=30)).date())
+            for left, right in [(end, start), (start, end + timedelta(days=1)), (start - timedelta(weeks=521), end)]:
+                with self.assertRaises(Exception) as error:
+                    service.read_asset_range(db, 1, 1, left, right, now=now)
+                self.assertEqual(error.exception.status_code, 422)
+            self.assertEqual(service.read_asset_range(db, 1, 1, end, end, now=now)['rows'], [])
+        response = self.client.get('/api/trading/portfolio/history/range', params={'account_id': 1, 'start_date': str(start), 'end_date': str(end)})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(response.json()['rows']), 2)
+        self.assertEqual(self.client.get('/api/trading/portfolio/history/range', params={'account_id': 2, 'start_date': str(start), 'end_date': str(end)}).status_code, 404)
