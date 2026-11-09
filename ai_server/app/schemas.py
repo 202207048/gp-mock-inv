@@ -305,6 +305,8 @@ class PortfolioRecentTrend(Schema):
 
 
 class PortfolioBriefRequest(Schema):
+    guesses_only: bool = False
+    news_headline: str | None = Field(default=None, min_length=1, max_length=1000)
     profile: ProfileId | None = None
     include_ai_metadata: bool = False
     symbol_code: str = Field(min_length=1, max_length=32)
