@@ -68,6 +68,20 @@ def body(**changes):
     return deepcopy(REQUEST) | changes
 
 
+def test_guesses_only_prompt_preserves_sources_and_does_not_regenerate_news():
+    request = PortfolioBriefRequest.model_validate(body(guesses_only=True))
+    prompt = build_portfolio_brief_prompt(request)
+    assert "다시 요약하지 마세요" in prompt
+    assert "trend_guesses는" in prompt
+    assert "watch_points는" in prompt
+    assert "키워드 구" in prompt
+    assert "배너용 요약" in prompt
+    assert "그대로 복사하거나 앞부분을 자르거나" in prompt
+    assert "문장 끝에 [1]" in prompt
+    assert REQUEST["recent_news"][0]["title"] in prompt
+    assert "인과관계" in prompt
+
+
 def unavailable(reason="legacy_execution_time_unavailable"):
     data = body()
     data.update(position={"available": False, "reason": reason}, trades=[],
@@ -97,8 +111,9 @@ def fake_adapter(cls, *, model="unit-test-model", effort="none", brief=None, bad
 def api(monkeypatch):
     manager = RuntimeProviderManager("gemini", openai_key_getter=lambda: "unit-test-only",
                                      gemini_key_getter=lambda: "unit-test-only")
-    monkeypatch.setattr(main.app.state, "provider_manager", manager)
-    monkeypatch.setattr(main.app.state, "model_profiles", profiles.ModelProfileRegistry())
+    # Starlette State stores values in its mapping; restore that mapping between clients.
+    monkeypatch.setitem(main.app.state._state, "provider_manager", manager)
+    monkeypatch.setitem(main.app.state._state, "model_profiles", profiles.ModelProfileRegistry())
     monkeypatch.setattr(profiles.settings, "get_openai_api_key", lambda: "unit-test-only")
     with TestClient(main.app, headers={"Authorization": "Bearer unit-test-service-token"}) as client:
         yield client, manager

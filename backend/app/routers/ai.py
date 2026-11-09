@@ -49,7 +49,7 @@ from app.services.news_service import get_news_by_symbol
 from app.utils.deps import get_current_user
 from app.schemas.portfolio_brief import (
     BriefSource, PortfolioBriefFacts, PortfolioBriefHistory, PortfolioBriefHistoryItem, PortfolioBriefResponse,
-    PortfolioProfile, SavedPortfolioBriefs,
+    PortfolioProfile, SavedPortfolioBriefs, RecentNews,
 )
 from app.schemas.brief_report import BriefReportRequest, BriefReportResponse
 from app.services.brief_report import ReportRejected, save_report
@@ -61,7 +61,7 @@ from app.services.portfolio_brief_service import (
 )
 
 from app.services.brief_store import delete_portfolio, list_history, list_portfolio, save_portfolio
-from app.services.stock_brief_service import service as stock_brief_service
+from app.services.stock_brief_service import service as stock_brief_service, StockUnavailable
 from app.services.theme_service import KST
 
 # prefix는 main.py에서 /api/ai 로 지정
@@ -553,17 +553,34 @@ async def portfolio_brief(
     response.headers["X-Trace-ID"] = str(trace_id)
     request.state.trace_id = trace_id
     request.state.ai_execution = None
-    facts = await build_portfolio_facts(snapshot)
+    # Both screens use the exact same public snapshot, including evidence and generation time.
     try:
+        news = await stock_brief_service.get(snapshot.symbol_code)
+    except StockUnavailable:
+        raise HTTPException(503, "뉴스 요약을 잠시 사용할 수 없습니다.") from None
+    facts = await build_portfolio_facts(snapshot, recent_news=[RecentNews(
+        title=item.title, summary="", source=item.source, url=item.url,
+        date=item.published_at.isoformat(),
+    ) for item in news.evidence])
+    try:
+        news_headline = news.title or next(iter(news.news_summary), "최근 뉴스 정리")
         result = await request_portfolio_brief(
-            settings.AI_SERVER_URL, facts, profile=profile, trace_id=trace_id,
+            settings.AI_SERVER_URL, facts, profile=profile, trace_id=trace_id, guesses_only=True, news_headline=news_headline,
         )
     except PortfolioBriefUnavailable as exc:
         raise HTTPException(exc.status_code, detail=str(exc),
                             headers={"X-Trace-ID": str(trace_id)}) from None
     request.state.ai_execution = result.ai
+    body = result.brief()
+    # Personal analysis must never create a second version of the public news.
+    body.update(banner_summary=body["headline"] if body["headline"] not in (news_headline, "보유종목 추정") else None,
+                headline=news_headline,
+                current_status=[], entry_context=[], position_summary=[], entry_news_summary=[],
+                limitations=[], recent_issues=news.recent_issues,
+                positive_factors=news.positive_factors, risk_factors=news.risk_factors)
     public = PortfolioBriefResponse(
-        symbol_code=facts.symbol_code, security_name=facts.security_name, generated_at=datetime.now(KST), **result.brief(),
+        symbol_code=facts.symbol_code, security_name=facts.security_name, generated_at=datetime.now(KST), **body,
+        news_brief=news,
         sources=[brief_source(news) for news in [*facts.recent_news, *facts.entry_news]],
     )
 

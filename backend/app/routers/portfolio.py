@@ -12,6 +12,7 @@ routers/portfolio.py - 포트폴리오(보유 종목) API 엔드포인트
     수익금 = (현재가 - 평균단가) × 보유수량
 """
 
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,13 @@ from app.utils.deps import get_current_user
 # prefix는 main.py에서 /api/trading 으로 지정
 # 최종 경로 예시: /api/trading/portfolio?account_id=1
 router = APIRouter(tags=["거래"])
+
+
+@router.get('/history/range', summary='계좌 자산 이력 기간 조회')
+def asset_history_range(start_date: date, end_date: date, account_id: int = Query(..., gt=0),
+                        current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.services.asset_history_service import read_asset_range
+    return read_asset_range(db, account_id, current_user.user_id, start_date, end_date)
 
 
 @router.get('/history', summary='계좌 자산 이력 주간 조회')

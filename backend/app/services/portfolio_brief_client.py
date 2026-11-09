@@ -106,6 +106,8 @@ def _parse_result(data: object, facts: PortfolioBriefFacts, profile: PortfolioPr
 
 async def request_portfolio_brief(base_url: str, facts: PortfolioBriefFacts, *,
                                   profile: PortfolioProfile = "luna",
+                                  guesses_only: bool = False,
+                                  news_headline: str | None = None,
                                   trace_id: UUID) -> PortfolioBriefResult:
     try:
         headers = service_headers()
@@ -113,6 +115,10 @@ async def request_portfolio_brief(base_url: str, facts: PortfolioBriefFacts, *,
         raise PortfolioBriefUnavailable(503) from None
     headers["X-Trace-ID"] = str(trace_id)
     payload = project_portfolio_brief(facts, profile)
+    if guesses_only:
+        payload["guesses_only"] = True
+    if news_headline:
+        payload["news_headline"] = news_headline
     if not isinstance(base_url, str) or not base_url.strip():
         raise PortfolioBriefUnavailable(503)
     try:

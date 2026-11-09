@@ -99,7 +99,7 @@ class StockBriefService:
                         if created_at.tzinfo is None:created_at=created_at.replace(tzinfo=timezone.utc)
                         age=(datetime.now(timezone.utc)-created_at).total_seconds()
                         snapshot=StockPublicResponse.model_validate(payload)
-                        if 0<=age<10800 and snapshot.symbol_code==code and snapshot.ai_available:
+                        if 0<=age<10800 and snapshot.symbol_code==code and snapshot.ai_available and "citations" in payload:
                             old=(self.clock()-age,10800,snapshot)
                             self.cache[code]=old
                             while len(self.cache)>200:self.cache.popitem(last=False)
@@ -137,6 +137,12 @@ class StockBriefService:
                     for field in ('recent_issues','positive_factors','risk_factors'):
                         setattr(snapshot,field,[x['text'] for x in data[field]])
                         ids.extend(i for x in data[field] for i in x['ids'])
+                        for row in data[field]:
+                            sources = snapshot.citations.setdefault(row['text'], [])
+                            for article_id in row['ids']:
+                                article = evidence[article_id][1]
+                                if article not in sources:
+                                    sources.append(article)
                     by_code={x['code']:x for x in data['related']}
                     for peer in snapshot.related:
                         row=by_code[peer.code];peer.title=row['title'];ids.extend(row['ids'])

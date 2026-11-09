@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from app.schemas.stock_brief import StockPublicResponse
 
 PositionReason = Literal[
     "legacy_execution_time_unavailable", "ambiguous_execution_order",
@@ -183,11 +184,25 @@ class BriefSource(BaseModel):
 
 
 class PortfolioBriefResponse(PortfolioBriefBody):
+    banner_summary: str | None = Field(default=None, max_length=1000)
+    # Legacy sections remain readable, but new responses store only the shared news and guesses.
+    current_status: list[BriefText] = Field(default_factory=list, max_length=3)
+    news_brief: "StockPublicResponse | None" = None
     generated_at: AwareDatetime
     symbol_code: str
     security_name: str | None
     # recent_news then entry_news, in the order the AI numbered them; older briefings have none.
     sources: list[BriefSource] = Field(default_factory=list, max_length=10)
+
+    @model_validator(mode="after")
+    def shared_news_matches(self):
+        if self.news_brief is not None:
+            if self.news_brief.symbol_code != self.symbol_code:
+                raise ValueError("Shared news belongs to another stock")
+            for field in ("recent_issues", "positive_factors", "risk_factors"):
+                if getattr(self, field) != getattr(self.news_brief, field):
+                    raise ValueError("Portfolio news differs from shared snapshot")
+        return self
 
 
 class SavedPortfolioBriefs(BaseModel):

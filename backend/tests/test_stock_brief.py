@@ -24,6 +24,27 @@ class ServiceTests(IsolatedAsyncioTestCase):
   self.now=0;self.quote=AsyncMock(side_effect=lambda code:quote());self.related=AsyncMock(return_value=[])
   self.collect=AsyncMock(side_effect=lambda *a:(articles(),{},{}));self.generate=AsyncMock(side_effect=lambda r:generated())
   self.service=StockBriefService(self.quote,self.related,self.collect,self.generate,lambda:self.now,load=lambda code:None,save=lambda *args:None)
+ async def test_sentence_citations_preserve_only_the_used_articles_and_persist(self):
+  saved=[]
+  self.service.save=lambda code,payload:saved.append(payload)
+  own=articles()
+  headline,article=own['s-0']
+  own['s-1']=(headline.model_copy(update={'id':'s-1'}),article.model_copy(update={'title':'Second article'}))
+  self.collect.side_effect=None;self.collect.return_value=(own,{},{})
+  data=generated()
+  data['positive_factors']=[{'text':'Second sentence.', 'ids':['s-1']}]
+  self.generate.side_effect=None;self.generate.return_value=data
+  result=await self.service.get('000001')
+  self.assertEqual(result.citations[data['recent_issues'][0]['text']],[article])
+  self.assertEqual([item.title for item in result.citations['Second sentence.']],['Second article'])
+  self.assertEqual(saved[0]['citations'],result.model_dump(mode='json')['citations'])
+ async def test_saved_snapshot_without_sentence_citations_is_regenerated(self):
+  result=await self.service.get('000001')
+  payload=result.model_dump(mode='json');payload.pop('citations')
+  self.service.cache.clear()
+  self.service.load=lambda code:(payload,datetime.now(KST))
+  await self.service.get('000001')
+  self.assertEqual(self.generate.await_count,2)
  async def test_ttl_refresh_quote_only_then_expire(self):
   await self.service.get('000001');self.now=10799
   result=await self.service.get('000001');self.assertEqual(self.generate.await_count,1);self.assertEqual(self.quote.await_count,2)
