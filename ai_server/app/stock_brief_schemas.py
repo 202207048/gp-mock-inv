@@ -10,6 +10,8 @@ class Headline(Schema):
     source: str | None
     published_at: AwareDatetime
     in_move_window: bool
+    # 본 종목 기사의 앞부분. 상세 화면 제목을 제목보다 자세히 쓰는 데만 쓴다.
+    summary: str | None = Field(default=None,max_length=300)
 class StockInput(Schema):
     code: str = Field(pattern=r"^\d{6}$")
     name: str
@@ -34,9 +36,17 @@ class RelatedBrief(Schema):
     code: str
     title: str | None
     ids: list[str]
+    banner_summary: str | None
+    banner_ids: list[str]
+    banner_tone: Literal["호재","악재","엇갈림"] | None
+    relation: str | None
 class StockBriefResponse(Schema):
     title: str | None
     title_ids: list[str]
+    banner_summary: str | None
+    banner_ids: list[str]
+    banner_detail: str | None
+    banner_tone: Literal["호재","악재","엇갈림"] | None
     recent_issues: list[Issue]
     positive_factors: list[Issue]
     risk_factors: list[Issue]

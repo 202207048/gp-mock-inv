@@ -7,6 +7,7 @@ from typing import Protocol
 from uuid import UUID
 
 from ..execution import ProviderExecutionResult
+from .stock_brief import TREND, names_an_event, sentence_ending
 from ..schemas import PortfolioBrief, PortfolioBriefRequest, PORTFOLIO_DISCLAIMER
 
 
@@ -77,7 +78,11 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
             "news_headline이 없으면 headline은 '보유종목 추정'으로 두세요. current_status는 ['보유종목 추정']으로 고정합니다. "
             "watch_points는 기사에서 이어지는 앞으로 확인할 점을 최대 3개의 짧은 한국어 키워드 구로 작성하세요. "
             "각 항목은 1~2어절, 15자 이내의 단어나 명사구로 쓰고 끝에 근거 기사 번호를 붙이세요. 예: '매출 반영 [1]', '후속 공시 [1]'. "
-            "기사에 없는 확인 항목이나 투자 행동 지시는 만들지 말고 근거가 없으면 빈 배열을 반환하세요. "
+            "기사 제목에 나온 사건·대상·일정 자체가 확인할 점입니다. 제목에서 그 말을 골라 짧게 줄여 쓰세요. "
+            "예: 제목 '고정밀 지도 서비스 국내 진출 초읽기' → '지도 서비스 국내 진출 [2]'. "
+            "recent_news가 있으면 1개 이상 작성하고, 기사 제목에 없는 사건이나 투자 행동 지시는 만들지 마세요. "
+            "코스피 급등, 반도체주 강세처럼 주가·지수 등락만 말하는 키워드는 확인할 점이 아니에요. "
+            "recent_news가 비어 있거나 등락만 다룬 기사뿐일 때만 빈 배열을 반환하세요. "
             "entry_context, position_summary, recent_issues, positive_factors, risk_factors, "
             "limitations, entry_news_summary는 모두 빈 배열이어야 합니다. "
             f"disclaimer는 '{PORTFOLIO_DISCLAIMER}'로 고정하고 지정된 필드만 담은 JSON을 반환하세요.\n\n"
@@ -165,6 +170,8 @@ def build_portfolio_brief_prompt(request: PortfolioBriefRequest) -> str:
 _GUESS_LABEL = re.compile(r"^\s*\[?추정\]?\s*[:：]\s*")
 _ADVICE = re.compile(r"(매수|매도|손절|익절)(하세요|하는 것이 좋|를 권|을 권)|(오를|내릴|상승할|하락할) (것|전망)|목표가")
 _CITE = re.compile(r"\s*\[(\d+)\]")
+# 키워드 칸에는 단어나 명사구만 둔다. '확인할 점', '~ 대상', '~ 필요' 꼴은 문장을 줄인 말로 본다.
+_NOT_KEYWORD = re.compile(r"확인할|(?:대상|필요)(?:함|임)?$")
 _RANGE = re.compile(r"(?<=[\d원%])\s*~\s*(?=[-\d])")
 CITED_FIELDS = ("recent_issues", "positive_factors", "risk_factors", "watch_points", "trend_guesses", "entry_news_summary")
 _WON = re.compile(r"(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?=\s*원)")
@@ -189,6 +196,14 @@ def tidy(text: str, articles: int) -> str:
     return _CITE.sub(cite, _RANGE.sub(" ~ ", format_won(text))).strip()
 
 
+def is_keyword(text: str, name: str = "") -> bool:
+    """근거 번호 [n]를 뺀 본문이 15자 이내의 문장 아닌 구인지 확인한다.
+    '코스피 급등', '반도체주 강세'처럼 등락만 말하는 말은 확인할 점이 아니므로 버린다."""
+    body = _CITE.sub("", text).strip()
+    return (0 < len(body) <= 15 and not _NOT_KEYWORD.search(body) and not sentence_ending(body)
+            and not TREND.search(body) and names_an_event(body, name))
+
+
 def validate_portfolio_brief(brief: PortfolioBrief, request: PortfolioBriefRequest) -> PortfolioBrief:
     if (request.entry_price_context is None or not request.entry_price_context.available) and brief.entry_context:
         raise ValueError("Unavailable entry context must not be reconstructed")
@@ -204,6 +219,10 @@ def validate_portfolio_brief(brief: PortfolioBrief, request: PortfolioBriefReque
     brief = brief.model_copy(update={"trend_guesses": guesses,
                                      "entry_news_summary": brief.entry_news_summary if request.entry_news else []})
     articles = len(request.recent_news) + len(request.entry_news)
-    return brief.model_copy(update={"headline": tidy(brief.headline, articles),
-                                    **{field: [tidy(text, articles if field in CITED_FIELDS else 0)
-                                               for text in getattr(brief, field)] for field in TEXT_FIELDS}})
+    brief = brief.model_copy(update={"headline": tidy(brief.headline, articles),
+                                     **{field: [tidy(text, articles if field in CITED_FIELDS else 0)
+                                                for text in getattr(brief, field)] for field in TEXT_FIELDS}})
+    if request.guesses_only:
+        # The prompt asks for keyword phrases; anything that still reads as a sentence is dropped, citations stay.
+        brief = brief.model_copy(update={"watch_points": [text for text in brief.watch_points if is_keyword(text, request.security_name or "")]})
+    return brief
