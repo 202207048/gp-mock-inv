@@ -26,6 +26,16 @@ class Account(Base):
     # 계좌 고유 번호 (자동 증가)
     account_id = Column(Integer, primary_key=True, index=True)
 
+    @property
+    def account_number(self) -> str:
+        """Stable site-wide number for every persisted account, including legacy ones.
+
+        The database primary key guarantees uniqueness without a separate allocation
+        race or a backfill. This is a display identifier, never an authorization key.
+        """
+        digits = f"{self.account_id:012d}"
+        return f"SM-{digits[:4]}-{digits[4:8]}-{digits[8:]}"
+
     # 계좌 소유자의 user_id (users 테이블과 연결)
     # ForeignKey: 반드시 users 테이블에 존재하는 user_id만 올 수 있음
     # 없는 유저의 계좌를 만들 수 없도록 DB가 자동으로 막아줌

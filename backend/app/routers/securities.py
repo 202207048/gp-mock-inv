@@ -33,12 +33,30 @@ from app.services.kis_service import (
 )
 from app.services.chart_history import ChartUnavailable, get_chart_history
 from app.services.market_details import get_market_details
+from app.services.stock_fundamentals import get_stock_fundamentals
+from app.services.stock_analysis import get_stock_analysis
+from app.services.stock_ratings import get_stock_ratings
 from app.services.popular_stocks import get_popular_stocks
 from app.routers.stock_logos import router as stock_logos_router
 
 # prefix는 main.py에서 /api/stocks 로 지정
 router = APIRouter(tags=["주식 시세"])
 router.include_router(stock_logos_router)
+
+
+@router.get('/{symbol_code}/fundamentals', summary='종목 투자 지표 조회')
+async def fundamentals(symbol_code: str):
+    return await get_stock_fundamentals(symbol_code)
+
+
+@router.get('/{symbol_code}/analysis', summary='실적·수급·재무·컨센서스·기업개요')
+async def stock_analysis(symbol_code: str):
+    return await get_stock_analysis(symbol_code)
+
+
+@router.get('/{symbol_code}/ratings', summary='증권사별 투자의견 및 목표주가')
+async def stock_ratings(symbol_code: str):
+    return await get_stock_ratings(symbol_code)
 
 
 @router.get('/{symbol_code}/orderbook', summary='매수·매도 10단계 호가 조회')

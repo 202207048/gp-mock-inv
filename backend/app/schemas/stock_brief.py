@@ -65,7 +65,12 @@ class StockPublicResponse(Schema):
     recent_issues: list[str] = Field(default_factory=list)
     positive_factors: list[str] = Field(default_factory=list)
     risk_factors: list[str] = Field(default_factory=list)
+    citations: dict[str, list[Evidence]] = Field(default_factory=dict)
     evidence: list[Evidence] = Field(default_factory=list,max_length=5)
     related: list[RelatedStock] = Field(default_factory=list,max_length=4)
     source: str = "네이버 증권"
     disclaimer: str = "기사 제목을 바탕으로 한 요약이며 전망이나 투자 조언이 아닙니다."
+
+    @property
+    def news_summary(self) -> list[str]:
+        return list(dict.fromkeys(self.recent_issues + self.positive_factors + self.risk_factors))

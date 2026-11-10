@@ -28,6 +28,7 @@ from app.schemas.portfolio_brief import (
 from app.services import portfolio_brief_client as service
 from app.services import portfolio_brief_service as facts_service
 from app.utils.deps import get_current_user
+from app.schemas.stock_brief import StockPublicResponse, Evidence
 
 START = datetime(2026, 10, 21, 1, tzinfo=timezone.utc)
 NEWS = {"title": "가온기술, 신규 공급 계약", "summary": "공급 계약을 공시했다.",
@@ -42,6 +43,26 @@ BODY = {"entry_context": [], "headline": "현재 보유 상태와 최근 공급 
         "disclaimer": PORTFOLIO_DISCLAIMER, "trend_guesses": [], "entry_news_summary": []}
 # The article the AI numbered [1], as the public response exposes it.
 SOURCE = {key: NEWS.get(key) for key in ("title", "url", "source", "date")}
+SHARED_SOURCE = {**SOURCE, "date": "2026-10-21T01:00:00+00:00"}
+
+
+def shared_news(rows=True):
+    return StockPublicResponse(symbol_code="SYN001", name="가온기술", price=120,
+        change_rate=1, as_of=START, generated_at=START, ai_available=bool(rows),
+        title="공통 뉴스 요약" if rows else None,
+        recent_issues=["공통 뉴스 본문"] if rows else [],
+        positive_factors=["공통 긍정 요인"] if rows else [], risk_factors=[],
+        evidence=[Evidence(title=NEWS["title"], source=NEWS["source"], url=NEWS["url"], published_at=START)] if rows else [])
+
+
+def shared_payload():
+    news = shared_news()
+    return {"symbol_code": "SYN001", "security_name": "가온기술", **BODY,
+        "headline": news.title, "banner_summary": BODY['headline'], "current_status": [], "entry_context": [], "position_summary": [],
+        "entry_news_summary": [], "limitations": [],
+        "recent_issues": news.recent_issues, "positive_factors": news.positive_factors,
+        "risk_factors": news.risk_factors, "sources": [SHARED_SOURCE],
+        "news_brief": news.model_dump(mode="json")}
 RealAsyncClient = httpx.AsyncClient
 
 
@@ -136,7 +157,7 @@ class ProjectionTests(unittest.TestCase):
         exposed = PortfolioBriefResponse(symbol_code="SYN001", security_name="가온기술", generated_at=START,
                                           **result.brief()).model_dump()
         self.assertEqual(exposed, {"symbol_code": "SYN001", "security_name": "가온기술", "generated_at": START,
-                                   "sources": [], **BODY})
+                               "sources": [], "news_brief": None, "banner_summary": None, **BODY})
 
 
 class SourceTests(unittest.TestCase):
@@ -372,7 +393,7 @@ class EndpointTests(unittest.TestCase):
             return response
         self.quote = AsyncMock(return_value={"current_price": "120.50"})
         self.news = AsyncMock(return_value=[NEWS])
-        async def generate(base_url, bundle, *, profile, trace_id):
+        async def generate(base_url, bundle, *, profile, trace_id, guesses_only=False, news_headline=None):
             data = wire(profile, trace_id)
             if not bundle.position.available:
                 data["position_summary"] = []
@@ -382,6 +403,7 @@ class EndpointTests(unittest.TestCase):
         self.generate = AsyncMock(side_effect=generate)
         self.generator_patch = patch.object(routes, "request_portfolio_brief", self.generate)
         for patcher in (self.generator_patch,
+                        patch.object(routes.stock_brief_service, "get", AsyncMock(side_effect=lambda code: shared_news(bool(self.news.return_value)))),
                         patch.object(facts_service, "get_current_price", self.quote),
                         patch.object(facts_service, "get_news_by_symbol", self.news),
                         patch.object(routes.settings, "AI_SERVER_URL", "http://ai.test")):
@@ -391,12 +413,43 @@ class EndpointTests(unittest.TestCase):
     def get(self, account=1, symbol="SYN001", query=""):
         return self.client.get(f"/api/ai/portfolio-brief/{symbol}?account_id={account}{query}")
 
+    def test_shared_news_is_identical_in_response_storage_and_guess_input(self):
+        from app.models.ai_brief_result import AiBriefResult
+        response = self.get()
+        self.assertEqual(response.status_code, 200)
+        public = response.json()
+        self.assertEqual(public["news_brief"], shared_news().model_dump(mode="json"))
+        self.assertTrue(self.generate.call_args.kwargs["guesses_only"])
+        self.assertEqual(self.generate.call_args.kwargs["news_headline"], shared_news().title)
+        supplied = self.generate.call_args.args[1].recent_news
+        self.assertEqual([item.title for item in supplied], [item.title for item in shared_news().evidence])
+        with self.Session() as db:
+            stored = db.query(AiBriefResult).filter_by(kind="portfolio", account_id=1).one().payload
+        self.assertEqual(stored["news_brief"], public["news_brief"])
+        self.assertEqual(stored["banner_summary"], BODY["headline"])
+        for field in ("recent_issues", "positive_factors", "risk_factors"):
+            self.assertEqual(stored[field], public["news_brief"][field])
+        self.assertEqual(stored["current_status"], [])
+        self.assertEqual(stored["watch_points"], BODY["watch_points"])
+        self.assertEqual(stored["limitations"], [])
+
+    def test_missing_shared_service_does_not_create_an_alternate_news_summary(self):
+        with patch.object(routes.stock_brief_service, "get", AsyncMock(side_effect=routes.StockUnavailable)):
+            self.assertEqual(self.get().status_code, 503)
+        self.generate.assert_not_awaited()
+
+    def test_mismatched_shared_news_cannot_be_loaded_as_a_portfolio_brief(self):
+        data = {**shared_payload(), "generated_at": START}
+        data["news_brief"]["symbol_code"] = "OTHER"
+        with self.assertRaises(ValueError):
+            PortfolioBriefResponse.model_validate(data)
+
     def test_authenticated_success_with_default_luna_and_private_metadata(self):
         result = self.get()
         self.assertEqual(result.status_code, 200, result.text)
         payload = result.json()
         self.assertIsNotNone(datetime.fromisoformat(payload.pop("generated_at")).utcoffset())
-        self.assertEqual(payload, {"symbol_code": "SYN001", "security_name": "가온기술", **BODY, "sources": [SOURCE]})
+        self.assertEqual(payload, shared_payload())
         self.assertEqual(self.generate.await_count, 1)
         kwargs = self.generate.call_args.kwargs
         self.assertEqual(kwargs["profile"], "luna")
@@ -563,7 +616,7 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertIsNotNone(datetime.fromisoformat(payload.pop("generated_at")).utcoffset())
-        self.assertEqual(payload, {"symbol_code": "SYN001", "security_name": "가온기술", **BODY, "sources": [SOURCE]})
+        self.assertEqual(payload, shared_payload())
         self.assertEqual(payloads[0]["profile"], "luna")
         for key in ("model", "provider", "reasoning"):
             self.assertNotIn(key, payloads[0])
@@ -590,7 +643,7 @@ class EndpointTests(unittest.TestCase):
         with patch.object(service.httpx,"AsyncClient",side_effect=factory),              patch.object(facts_service,"load_daily_rows",AsyncMock(return_value=[])),              patch.object(facts_service,"calculate_entry_price_context",Mock(return_value=context)):
             response=self.get(query="&profile=sol")
         self.assertEqual(response.status_code,200,response.text)
-        self.assertEqual(response.json()["entry_context"],["포지션 시작 직전 확인된 종가는 100원입니다."])
+        self.assertEqual(response.json()["entry_context"], [])
         self.assertEqual(payloads[0]["entry_price_context"],context.model_dump(mode="json"))
         self.assertNotIn("historical_price_unavailable",payloads[0]["limitations"])
         self.assertNotIn("account_id",payloads[0])

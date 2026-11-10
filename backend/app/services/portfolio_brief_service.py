@@ -156,11 +156,13 @@ async def _entry_news(symbol_code: str, position) -> list[RecentNews]:
     return news[:5]
 
 
-async def build_portfolio_facts(snapshot: PortfolioFactsSnapshot) -> PortfolioBriefFacts:
+async def build_portfolio_facts(snapshot: PortfolioFactsSnapshot, *, recent_news: list[RecentNews] | None = None) -> PortfolioBriefFacts:
     # One daily-chart read serves both the entry context and the current trend.
     position = snapshot.replay.position
+    async def selected_news():
+        return recent_news if recent_news is not None else await _recent_news(snapshot.symbol_code)
     (price, change_rate), news, rows, entry_news = await asyncio.gather(
-        _current_quote(snapshot.symbol_code), _recent_news(snapshot.symbol_code),
+        _current_quote(snapshot.symbol_code), selected_news(),
         load_daily_rows(snapshot.symbol_code), _entry_news(snapshot.symbol_code, position),
     )
     entry = unavailable(position) if rows is None else calculate_entry_price_context(position, rows)
