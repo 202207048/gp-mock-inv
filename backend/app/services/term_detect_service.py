@@ -3,6 +3,7 @@ import asyncio
 from collections import OrderedDict, defaultdict, deque
 import hashlib
 import json
+import re
 import time
 import unicodedata
 import httpx
@@ -38,7 +39,8 @@ class TermDetectUnavailable(Exception):
 def request_key(request):
     text = " ".join(unicodedata.normalize("NFKC", request.text).split())
     known = sorted({unicodedata.normalize("NFKC", k) for k in request.known})
-    return hashlib.sha256(json.dumps([text, known], ensure_ascii=False).encode("utf-8")).hexdigest()
+    parts = [text, known, True] if request.ask else [text, known]
+    return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def plain(name):
@@ -56,6 +58,31 @@ def listed_names_in(db, text, now):
 
 
 MARKETS = {"KOSPI": "코스피", "KOSDAQ": "코스닥", "코스피": "코스피", "코스닥": "코스닥"}
+# 순위표처럼 '깨끗한나라 004540'으로 이름 옆에 종목 코드가 붙은 글. 코드로 확실히 찾을 수 있다.
+CODE = re.compile(r"(?<![0-9A-Za-z])([0-9]{6})(?![0-9A-Za-z])")
+MAX_CODES = 12
+
+
+async def listed_by_code(db, text):
+    """글에 나온 6자리 종목 코드 가운데, 그 종목 이름도 글에 있는 것. {이름: (코드, 시장)}"""
+    codes = list(dict.fromkeys(CODE.findall(text)))[:MAX_CODES]
+
+    async def find(code):
+        row = None
+        if db is not None:
+            row = db.query(ItemMaster.name, ItemMaster.market_type).filter(ItemMaster.symbol_code == code).first()
+        if row and row[0]:
+            return row[0], (code, MARKETS.get(row[1], "국내 상장"))
+        for item in await search_listed_stocks(code, 5):
+            if item["symbol_code"] == code:
+                return item["name"], (code, MARKETS.get(item.get("market_type"), "국내 상장"))
+        return None
+
+    found = {}
+    for hit in await asyncio.gather(*(find(code) for code in codes), return_exceptions=True):
+        if isinstance(hit, tuple) and hit[0] in text:
+            found[hit[0]] = hit[1]
+    return found
 
 
 async def listed_code(db, name):
@@ -96,12 +123,21 @@ async def detect_terms(request: TermDetectRequest, user_id, db=None) -> TermDete
         raise TermDetectUnavailable(503) from None
     take_call(user_id, now)
     payload = request.model_dump()
+    # 예전 AI 서버도 받을 수 있게, 검색할 때만 ask를 보낸다.
+    if not request.ask:
+        payload.pop("ask")
     payload["companies"] = []
+    by_code = {}
+    try:
+        by_code = await listed_by_code(db, request.text)
+    except Exception:  # 코드로 찾기는 없어도 된다.
+        by_code = {}
     if db is not None:
         try:
             payload["companies"] = listed_names_in(db, request.text, now)
         except Exception:  # 힌트는 없어도 된다.
             payload["companies"] = []
+    payload["companies"] = list(dict.fromkeys([*by_code, *payload["companies"]]))[:20]
     try:
         async with httpx.AsyncClient(timeout=25.0) as client:
             response = await client.post(str(base).rstrip("/") + "/terms/detect", headers=headers,
@@ -122,15 +158,20 @@ async def detect_terms(request: TermDetectRequest, user_id, db=None) -> TermDete
         if plain(name) not in named and name not in ALIASES:
             result.terms.append(DetectedTerm(term=name, tier="company", meaning="", basis="data"))
     companies = [t for t in result.terms if t.tier == "company"]
-    if db is not None and companies:
-        codes = await asyncio.gather(*(listed_code(db, t.term) for t in companies), return_exceptions=True)
+    if companies:
+        async def lookup(name):
+            if name in by_code:
+                return by_code[name]
+            return await listed_code(db, name) if db is not None else None
+        codes = await asyncio.gather(*(lookup(t.term) for t in companies), return_exceptions=True)
         for term, found in zip(companies, codes):
             if isinstance(found, tuple):
                 # 국내 상장사의 시장은 AI 말 대신 종목 데이터로 쓴다.
                 term.symbol_code, term.listing = found
                 term.listing_checked = True
                 if term.basis == "data":
-                    term.meaning = f"{term.listing}에 상장된 국내 기업이에요. 종목 보기에서 시세를 확인할 수 있어요."
+                    place = term.listing if term.listing in ("코스피", "코스닥") else "국내 증시"
+                    term.meaning = f"{place}에 상장된 국내 기업이에요."
     result.terms = [t for t in result.terms if t.meaning]
     _cache[key] = (time.monotonic(), result.model_copy(deep=True))
     while len(_cache) > CACHE_MAX_SIZE:
