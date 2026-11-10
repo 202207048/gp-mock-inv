@@ -228,3 +228,6 @@ app.include_router(ai_theme_router, prefix="/api/ai", tags=["AI/테마"])
 
 from app.routers.ai_stock import router as ai_stock_router
 app.include_router(ai_stock_router, prefix="/api/ai", tags=["AI"])
+
+from app.routers.ai_asset_coach import router as ai_asset_coach_router
+app.include_router(ai_asset_coach_router, prefix="/api/ai", tags=["AI"])

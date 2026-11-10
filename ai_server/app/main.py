@@ -1,6 +1,7 @@
 from .theme_routes import router as theme_router
 from .stock_brief_routes import router as stock_brief_router
 from .term_routes import router as term_router
+from .asset_coach_routes import router as asset_coach_router
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -47,6 +48,7 @@ app = FastAPI(title="News AI Analysis")
 app.include_router(theme_router)
 app.include_router(stock_brief_router)
 app.include_router(term_router)
+app.include_router(asset_coach_router)
 app.state.provider_manager = RuntimeProviderManager(get_ai_provider())
 app.state.model_profiles = ModelProfileRegistry()
 
