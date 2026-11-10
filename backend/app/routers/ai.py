@@ -28,6 +28,7 @@ from app.services.news_analysis_service import analyze_news, NewsAnalysisUnavail
 from app.schemas.term_detect import TermDetectRequest, TermDetectResponse
 from app.services.term_detect_service import TermDetectUnavailable, detect_terms
 from app.config import settings
+from app.services.stock_brief_validation import names_an_event, price_talk
 from app.schemas.pattern_brief import PatternFacts, PatternBrief, PatternPublicResponse, attach_comparison_notes, PatternGenerateRequest, PatternInsufficient
 from app.services.pattern_brief_service import build_pattern_facts
 from app.services.pattern_brief_client import PatternBriefUnavailable, request_pattern_brief
@@ -573,7 +574,12 @@ async def portfolio_brief(
     request.state.ai_execution = result.ai
     body = result.brief()
     # Personal analysis must never create a second version of the public news.
-    body.update(banner_summary=body["headline"] if body["headline"] not in (news_headline, "보유종목 추정") else None,
+    # The banner is the shared news snapshot's own summary; the personal headline only fills in when there is none.
+    fallback = body["headline"] if body["headline"] not in (news_headline, "보유종목 추정") else None
+    # 등락률이 카드에 따로 나오므로 '코스피·코스닥 급등과 매수 사이드카' 같은 등락 이야기는 대체값으로 쓰지 않는다.
+    if fallback and (price_talk(fallback) or not names_an_event(fallback, facts.security_name or "")):
+        fallback = None
+    body.update(banner_summary=news.banner_summary or fallback,
                 headline=news_headline,
                 current_status=[], entry_context=[], position_summary=[], entry_news_summary=[],
                 limitations=[], recent_issues=news.recent_issues,

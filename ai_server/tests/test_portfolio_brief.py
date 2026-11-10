@@ -21,7 +21,7 @@ from app.schemas import (
     PORTFOLIO_DISCLAIMER, PortfolioBrief, PortfolioBriefRequest, PortfolioBriefResponse,
 )
 from app.summarizers.base import SummarizerError, SummarizerUnavailableError
-from app.summarizers.portfolio import build_portfolio_brief_prompt
+from app.summarizers.portfolio import build_portfolio_brief_prompt, is_keyword
 from app.summarizers.portfolio_openai import OpenAIPortfolioBriefGenerator
 from app.summarizers.portfolio_gemini import GeminiPortfolioBriefGenerator
 
@@ -75,6 +75,8 @@ def test_guesses_only_prompt_preserves_sources_and_does_not_regenerate_news():
     assert "trend_guesses는" in prompt
     assert "watch_points는" in prompt
     assert "키워드 구" in prompt
+    assert "제목에 나온 사건·대상·일정" in prompt
+    assert "등락만 다룬 기사뿐일 때만 빈 배열" in prompt and "코스피 급등, 반도체주 강세" in prompt
     assert "배너용 요약" in prompt
     assert "그대로 복사하거나 앞부분을 자르거나" in prompt
     assert "문장 끝에 [1]" in prompt
@@ -916,3 +918,32 @@ def test_endpoint_sends_entry_news_summary_only_when_entry_news_was_sent(api, mo
         **config, client=NS(responses=NS(parse=lambda **kwargs: NS(output_parsed=PortfolioBrief(**brief), usage=None)))))
     data = client.post(PATH, json=body(profile="luna", entry_news=ENTRY_NEWS)).json()
     assert data["entry_news_summary"] == ["시작 직전 신제품을 공개했습니다. [4]"] and data["trend_guesses"] == []
+
+@pytest.mark.parametrize("cls", ADAPTERS)
+def test_guesses_only_watch_points_keep_only_cited_keyword_phrases(cls):
+    points = ["매출 반영 [1]", "후속 공시[2][9]", "다음 실적에서 계약 매출 반영과 비용 변화를 확인할 수 있습니다. [1]"]
+    adapter, _ = fake_adapter(cls, brief={**BRIEF, "watch_points": points})
+    result = adapter.generate(PortfolioBriefRequest(**body(guesses_only=True)))
+    assert result.watch_points == ["매출 반영 [1]", "후속 공시 [2]"]
+    # 문장형 응답을 그대로 쓰는 기존(전체 브리핑) 모드는 건드리지 않는다.
+    adapter, _ = fake_adapter(cls, brief={**BRIEF, "watch_points": points})
+    assert len(adapter.generate(PortfolioBriefRequest(**REQUEST)).watch_points) == 3
+
+
+@pytest.mark.parametrize("text,kept", [
+    ("매출 반영 [1]", True), ("후속 공시", True), ("3분기 실적 발표 [1][2]", True),
+    ("가" * 15 + " [1]", True), ("가" * 16 + " [1]", False),
+    ("후속 공시 대상입니다 [1]", False), ("실적 발표 확인 대상 [1]", False), ("공시 확인 필요 [1]", False),
+    ("확인할 점 [1]", False), ("실적을 확인할 것 [1]", False), ("비용 변화를 봐요 [1]", False),
+    ("계약 공시를 확인하세요 [1]", False), ("매출이 늘었다 [1]", False), ("후속 공시. [1]", False), ("[1]", False),
+    ("HBM 수요 [1]", True), ("캐나다 [1]", True), ("확인 필요함 [1]", False), ("비용이 줄어든다 [1]", False),
+    ("코스피 급등 [2]", False), ("반도체주 강세 [1]", False), ("외국인 순매수 [1]", False), ("코스피 급반등 [1]", False),
+    ("주가 상승세 [1]", False), ("실적 반등 [1]", True), ("구글맵 국내 상륙 [2]", True), ("AI 동맹 [3]", True),
+])
+def test_keyword_rule_counts_the_text_before_the_citation(text, kept):
+    assert is_keyword(text) is kept
+
+
+def test_keyword_that_only_names_the_stock_and_its_move_is_dropped():
+    assert is_keyword("가상전자 급등 [1]", "가상전자") is False
+    assert is_keyword("가상전자 신제품 공개 [1]", "가상전자") is True

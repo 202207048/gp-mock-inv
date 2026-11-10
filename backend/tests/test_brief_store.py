@@ -48,7 +48,7 @@ class StoreTests(unittest.TestCase):
    service=self.service()
    if mode=='failure':service.generate.side_effect=RuntimeError('fake')
    elif mode=='empty':service.collect.side_effect=None;service.collect.return_value=({},{},{})
-   else:service.generate.side_effect=lambda r:{**stock.generated(),'title':None,'title_ids':[],'recent_issues':[]}
+   else:service.generate.side_effect=lambda r:{**stock.generated(),'title':None,'title_ids':[],'recent_issues':[],'banner_summary':None,'banner_ids':[],'banner_tone':None}
    self.assertFalse(asyncio.run(service.get('000001')).ai_available)
    self.assertIsNone(store.load_stock('000001'))
  def test_injected_load_and_save_failure_do_not_break_response(self):

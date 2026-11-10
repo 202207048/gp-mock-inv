@@ -433,6 +433,22 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(stored["watch_points"], BODY["watch_points"])
         self.assertEqual(stored["limitations"], [])
 
+    def test_banner_summary_comes_from_the_shared_news_and_falls_back_only_when_missing(self):
+        news = shared_news().model_copy(update={"banner_summary": "신규 공급 계약 공시"})
+        with patch.object(routes.stock_brief_service, "get", AsyncMock(return_value=news)):
+            public = self.get().json()
+        self.assertEqual(public["banner_summary"], "신규 공급 계약 공시")
+        self.assertEqual(public["news_brief"]["banner_summary"], "신규 공급 계약 공시")
+        self.assertEqual(public["headline"], news.title)
+        self.generate.assert_awaited_once()
+        # Without a grounded summary the personal headline keeps filling the banner.
+        self.assertEqual(self.get().json()["banner_summary"], BODY["headline"])
+
+    def test_personal_headline_that_only_talks_about_prices_is_not_used_as_the_banner(self):
+        # 등락률이 카드에 따로 나오므로 등락 이야기뿐인 개인 제목은 배너 자리에 넣지 않는다.
+        with patch.dict(BODY, {"headline": "코스피·코스닥 급등과 매수 사이드카"}):
+            self.assertIsNone(self.get().json()["banner_summary"])
+
     def test_missing_shared_service_does_not_create_an_alternate_news_summary(self):
         with patch.object(routes.stock_brief_service, "get", AsyncMock(side_effect=routes.StockUnavailable)):
             self.assertEqual(self.get().status_code, 503)

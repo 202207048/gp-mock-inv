@@ -43,7 +43,7 @@ async def fetch_related(code,rate):
         response=await client.get(NAVER+code+'/integration');response.raise_for_status()
     return select_related(response.json().get('industryCompareInfo',[]),code,rate)
 
-def article_inputs(rows,prefix,now,as_of):
+def article_inputs(rows,prefix,now,as_of,notes=False):
     dates=session_dates(now,as_of);out={}
     for row in rows:
         try:
@@ -53,7 +53,9 @@ def article_inputs(rows,prefix,now,as_of):
             if title in {h.title for h,e in out.values()}:continue
             key=prefix+str(len(out))
             evidence=Evidence(title=title,source=row.get('source'),url=row.get('url'),published_at=at)
-            out[key]=(Headline(id=key,title=title,source=evidence.source,published_at=at,in_move_window=at.date() in dates),evidence)
+            # 본 종목 기사는 앞부분을 붙여 상세 화면 제목을 제목보다 자세히 쓸 수 있게 한다.
+            note=' '.join(html.unescape(row.get('summary') or '').split()).rstrip('.… ')[:200] if notes else ''
+            out[key]=(Headline(id=key,title=title,source=evidence.source,published_at=at,in_move_window=at.date() in dates,summary=note or None),evidence)
         except (ValueError,TypeError,KeyError):continue
     return out
 
@@ -62,7 +64,7 @@ async def collect_articles(code,related,now,as_of):
         try:return (await get_news_by_symbol(symbol,limit))[:limit]
         except Exception:return []
     groups=await asyncio.gather(one(code,10),*(one(s.code,5) for s in related))
-    own=article_inputs(groups[0],'s-',now,as_of)
+    own=article_inputs(groups[0],'s-',now,as_of,notes=True)
     peers={s.code:article_inputs(rows,'p'+s.code+'-',now,as_of) for s,rows in zip(related,groups[1:])}
     try:_,market=await collect_market_context(now,as_of)
     except Exception:market={}
@@ -76,7 +78,12 @@ async def request_stock(request):
     headers=service_headers();base=httpx.URL(settings.AI_SERVER_URL.strip())
     if base.scheme not in ('http','https') or not base.host:raise ValueError('Invalid AI origin')
     async with httpx.AsyncClient(timeout=30) as client:
-        response=await client.post(str(base).rstrip('/')+'/brief/stock',headers=headers,json=request.model_dump(mode='json'))
+        url=str(base).rstrip('/')+'/brief/stock';payload=request.model_dump(mode='json')
+        response=await client.post(url,headers=headers,json=payload)
+        if response.status_code==422:
+            # 기사 앞부분(summary) 칸을 모르는 이전 AI 서버는 422를 돌려준다. 그 칸을 빼고 한 번 더 보낸다.
+            for h in [h for s in [payload['stock'],*payload['related']] for h in s['headlines']]+payload['market_headlines']:h.pop('summary',None)
+            response=await client.post(url,headers=headers,json=payload)
         response.raise_for_status();return response.json()
 
 class StockUnavailable(Exception):pass
@@ -99,7 +106,7 @@ class StockBriefService:
                         if created_at.tzinfo is None:created_at=created_at.replace(tzinfo=timezone.utc)
                         age=(datetime.now(timezone.utc)-created_at).total_seconds()
                         snapshot=StockPublicResponse.model_validate(payload)
-                        if 0<=age<10800 and snapshot.symbol_code==code and snapshot.ai_available and "citations" in payload:
+                        if 0<=age<10800 and snapshot.symbol_code==code and snapshot.ai_available and "citations" in payload and "banner_summary" in payload and "banner_detail" in payload and "banner_tone" in payload and all("relation" in p for p in payload.get("related",[])):
                             old=(self.clock()-age,10800,snapshot)
                             self.cache[code]=old
                             while len(self.cache)>200:self.cache.popitem(last=False)
@@ -131,8 +138,14 @@ class StockBriefService:
             if evidence:
                 ttl=10800
                 try:
-                    data=sanitize_stock_output(await self.generate(request),request)
+                    raw=await self.generate(request)
+                    data=sanitize_stock_output(raw,request)
+                    # 배너 요약을 모르는 이전 AI 서버의 응답은 저장하지 않고 30분 뒤 다시 만든다.
+                    if 'banner_summary' not in raw:ttl=1800
                     snapshot.title=data['title']
+                    snapshot.banner_summary=data['banner_summary']
+                    snapshot.banner_detail=data['banner_detail']
+                    snapshot.banner_tone=data['banner_tone']
                     ids=list(data['title_ids'])
                     for field in ('recent_issues','positive_factors','risk_factors'):
                         setattr(snapshot,field,[x['text'] for x in data[field]])
@@ -146,8 +159,10 @@ class StockBriefService:
                     by_code={x['code']:x for x in data['related']}
                     for peer in snapshot.related:
                         row=by_code[peer.code];peer.title=row['title'];ids.extend(row['ids'])
+                        peer.banner_summary,peer.banner_tone,peer.relation=row['banner_summary'],row['banner_tone'],row['relation'];ids.extend(row['banner_ids'])
+                    ids.extend(data['banner_ids'])
                     snapshot.evidence=[evidence[i][1] for i in dict.fromkeys(ids)][:5]
-                    snapshot.ai_available=bool(snapshot.title or snapshot.recent_issues or snapshot.positive_factors or snapshot.risk_factors or any(p.title for p in snapshot.related))
+                    snapshot.ai_available=bool(snapshot.title or snapshot.banner_summary or snapshot.recent_issues or snapshot.positive_factors or snapshot.risk_factors or any(p.title for p in snapshot.related))
                     diagnostic='accepted' if snapshot.ai_available else 'ai_abstained'
                 except Exception:ttl=300;diagnostic='validation_failed:upstream_error'
             logger.info('stock_diagnostic code=%s result=%s',code,diagnostic)
