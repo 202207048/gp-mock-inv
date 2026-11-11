@@ -26,7 +26,7 @@ class PollCreate(BaseModel):
 
 
 class PostCreateRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(default='', max_length=200)
     content: str = Field(min_length=1, max_length=10000)
     symbol_code: str | None = Field(default=None, max_length=20)
     images: list[str] = Field(default_factory=list, max_length=4)
@@ -34,7 +34,12 @@ class PostCreateRequest(BaseModel):
     trade_id: int | None = Field(default=None, gt=0)
     quote_post_id: int | None = Field(default=None, gt=0)
 
-    @field_validator("title", "content")
+    @field_validator("title")
+    @classmethod
+    def title_text(cls, value):
+        return value.strip()
+
+    @field_validator("content")
     @classmethod
     def nonblank(cls, value):
         if not value.strip():
@@ -62,16 +67,9 @@ class PostCreateRequest(BaseModel):
         return values
 
 
-class PostUpdateRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    content: str = Field(min_length=1, max_length=10000)
-
-    @field_validator('title', 'content')
-    @classmethod
-    def nonblank(cls, value):
-        if not value.strip():
-            raise ValueError('제목과 내용을 입력해 주세요.')
-        return value.strip()
+class PostUpdateRequest(PostCreateRequest):
+    # Omitted attachment fields are preserved; explicit null/[] removes them.
+    pass
 
 
 class VoteRequest(BaseModel):

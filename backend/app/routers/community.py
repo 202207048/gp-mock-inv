@@ -36,7 +36,7 @@ router = APIRouter(tags=["커뮤니티"])
 
 @router.get("/capabilities", summary="커뮤니티 지원 기능")
 def community_capabilities():
-    return {"attachments": True, "polls": True, "quotes": True}
+    return {"attachments": True, "polls": True, "quotes": True, "edit_attachments": True}
 
 
 def post_attachments(post, user_id, db):
@@ -70,12 +70,12 @@ def get_posts(
 ):
     """
     게시글 목록을 페이지 단위로 반환합니다.
-    
+
     사용 예시:
         GET /community/posts              → 전체 게시글 1페이지 (20개)
         GET /community/posts?page=2       → 2페이지
         GET /community/posts?symbol_code=005930 → 삼성전자 종목 게시판
-    
+
     응답 예시:
         {
             "total": 150,
@@ -130,29 +130,13 @@ def get_posts(
     }
 
 
-@router.post("/posts", summary="게시글 작성")
-async def create_post(
-    req: PostCreateRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    새 게시글을 작성합니다.
-    
-    요청 예시:
-        POST /community/posts
-        {
-            "title": "삼성전자 어떻게 생각하세요?",
-            "content": "요즘 반도체 업황이...",
-            "symbol_code": "005930"   # 종목 게시판에 올릴 경우 (선택사항)
-        }
-    """
+async def build_attachments(req, current_user, db):
     attachments = {"images": req.images}
     if req.quote_post_id:
         original = db.query(Post).filter(Post.post_id == req.quote_post_id).first()
         if not original:
             raise HTTPException(status_code=404, detail="인용할 게시글을 찾을 수 없습니다.")
-        attachments["quote"] = {"post_id": original.post_id, "title": original.title,
+        attachments["quote"] = {"post_id": original.post_id, "title": original.title or (original.attachments or {}).get("poll", {}).get("question", ""),
                                 "content": original.content[:1000],
                                 "author_name": original.author.user_name if original.author else ""}
     if req.symbol_code:
@@ -187,6 +171,29 @@ async def create_post(
             "profit_loss": returns.get('profit_loss'),
             "profit_rate": returns.get('profit_rate'),
         }
+    return attachments
+
+
+@router.post("/posts", summary="게시글 작성")
+async def create_post(
+    req: PostCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    새 게시글을 작성합니다.
+
+    요청 예시:
+        POST /community/posts
+        {
+            "title": "삼성전자 어떻게 생각하세요?",
+            "content": "요즘 반도체 업황이...",
+            "symbol_code": "005930"   # 종목 게시판에 올릴 경우 (선택사항)
+        }
+    """
+    if not req.title and not req.poll:
+        raise HTTPException(status_code=422, detail="투표가 없는 게시글은 제목을 입력해 주세요.")
+    attachments = await build_attachments(req, current_user, db)
     post = Post(
         user_id=current_user.user_id,
         title=req.title,
@@ -240,15 +247,36 @@ def get_post(
 
 
 @router.put('/posts/{post_id}', summary='게시글 수정')
-def update_post(
+async def update_post(
     post_id: int,
     req: PostUpdateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    post = db.query(Post).filter(Post.post_id == post_id, Post.user_id == current_user.user_id).first()
+    post = db.query(Post).filter(Post.post_id == post_id, Post.user_id == current_user.user_id).with_for_update().first()
     if not post:
         raise HTTPException(status_code=404, detail='게시글을 찾을 수 없거나 권한이 없습니다.')
+    fields = req.model_fields_set
+    effective_poll = req.poll if 'poll' in fields else (post.attachments or {}).get('poll')
+    if not req.title and not effective_poll:
+        raise HTTPException(status_code=422, detail="투표가 없는 게시글은 제목을 입력해 주세요.")
+    attachment_fields = {'images': 'images', 'poll': 'poll', 'trade_id': 'trade',
+                         'quote_post_id': 'quote', 'symbol_code': 'symbol_name'}
+    selected = fields & attachment_fields.keys()
+    if selected:
+        incoming = await build_attachments(req, current_user, db)
+        attachments = dict(post.attachments or {})
+        if 'poll' in selected and attachments.get('poll') != incoming.get('poll'):
+            db.query(PostVote).filter(PostVote.post_id == post_id).delete(synchronize_session=False)
+        for field in selected:
+            key = attachment_fields[field]
+            if key in incoming:
+                attachments[key] = incoming[key]
+            else:
+                attachments.pop(key, None)
+        post.attachments = attachments
+        if 'symbol_code' in selected:
+            post.symbol_code = req.symbol_code
     post.title = req.title
     post.content = req.content
     db.commit()
@@ -263,7 +291,7 @@ def delete_post(
 ):
     """
     게시글을 삭제합니다. 본인이 작성한 게시글만 삭제 가능합니다.
-    
+
     cascade 설정으로 댓글과 좋아요도 자동으로 삭제됩니다.
     """
     # post_id와 user_id를 동시에 조건으로 → 다른 사람 게시글 삭제 방지
@@ -289,7 +317,7 @@ def create_comment(
 ):
     """
     게시글에 댓글을 작성합니다.
-    
+
     요청 예시:
         POST /community/posts/1/comments
         {"content": "좋은 의견이네요!"}
@@ -317,10 +345,10 @@ def toggle_like(
 ):
     """
     게시글 좋아요를 토글합니다.
-    
+
     - 좋아요 안 한 상태에서 누르면 → 좋아요 추가
     - 이미 좋아요 한 상태에서 누르면 → 좋아요 취소
-    
+
     응답:
         {"liked": true, "message": "좋아요!"}       → 추가됨
         {"liked": false, "message": "좋아요가 취소되었습니다."} → 취소됨
