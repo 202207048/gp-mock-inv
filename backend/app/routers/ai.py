@@ -41,7 +41,7 @@ from app.models.portfolio import Portfolio
 from app.models.security import ItemMaster
 from app.models.user import User
 from app.models.user_survey_response import UserSurveyResponse
-from app.services.ai_service import analyze_survey_answers, generate_coach_advice
+from app.services.ai_service import analyze_survey_answers, generate_coach_advice, reusable_survey_analysis
 from app.services.news_summary_service import (
     NEWS_DISCLAIMER, NewsSummaryUnavailable, get_summary_provider, summarize_stock_news,
 )
@@ -135,9 +135,34 @@ async def submit_survey(
     """
     설문 답변을 저장한 뒤 Gemini로 투자성향을 분석합니다.
 
-    기존 답변이 있으면 덮어씁니다 (재설문 가능).
+    문항별 답변이 같고 저장된 분석이 유효하면 AI를 호출하지 않고 기존 결과를 반환합니다.
+    답변이 달라졌거나 저장된 분석이 없으면 새로 분석합니다 (재설문 가능).
     분석 결과는 users.investment_style 과 ai_propensity_advice 에 저장됩니다.
     """
+    # Serialize submissions per user so saved answers and their analysis stay paired.
+    current_user = db.query(User).filter(User.user_id == current_user.user_id).with_for_update().populate_existing().one()
+    previous = db.query(UserSurveyResponse).filter(
+        UserSurveyResponse.user_id == current_user.user_id
+    ).all()
+    submitted = sorted((answer.question_number, answer.selected_answer) for answer in req.answers)
+    stored = sorted((answer.question_number, answer.selected_answer) for answer in previous)
+    if submitted and submitted == stored:
+        advice = db.query(AiPropensityAdvice).filter(
+            AiPropensityAdvice.user_id == current_user.user_id
+        ).order_by(AiPropensityAdvice.created_at.desc(), AiPropensityAdvice.advice_id.desc()).first()
+        analysis = reusable_survey_analysis(advice.ai_detailed_advice, advice.ai_analysis_result) if advice else None
+        if analysis is not None:
+            current_user.investment_style = analysis["investor_type"]
+            db.commit()
+            return {
+                "message": "답변이 같아 저장된 투자성향 분석 결과를 불러왔습니다.",
+                "user_id": current_user.user_id,
+                "answer_count": len(submitted),
+                "investment_style": analysis["investor_type"],
+                "analysis": analysis,
+                "reused": True,
+            }
+
     db.query(UserSurveyResponse).filter(
         UserSurveyResponse.user_id == current_user.user_id
     ).delete()
@@ -176,6 +201,7 @@ async def submit_survey(
         "answer_count": len(saved),
         "investment_style": analysis["investor_type"],
         "analysis": analysis,
+        "reused": False,
     }
 
 
@@ -219,7 +245,7 @@ def get_my_propensity(
     advice = (
         db.query(AiPropensityAdvice)
         .filter(AiPropensityAdvice.user_id == current_user.user_id)
-        .order_by(AiPropensityAdvice.created_at.desc())
+        .order_by(AiPropensityAdvice.created_at.desc(), AiPropensityAdvice.advice_id.desc())
         .first()
     )
 

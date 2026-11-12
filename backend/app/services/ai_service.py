@@ -32,6 +32,23 @@ _FALLBACK = {
 }
 
 
+def reusable_survey_analysis(raw: str | None, investor_type: str | None) -> dict | None:
+    """Only reuse complete saved results, never a failed analysis or legacy plain text."""
+    try:
+        analysis = json.loads(raw or "")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(analysis, dict) or analysis == _FALLBACK:
+        return None
+    if not investor_type or analysis.get("investor_type") != investor_type:
+        return None
+    if any(not isinstance(analysis.get(key), str) or not analysis[key].strip() for key in ("summary", "advice")):
+        return None
+    if not isinstance(analysis.get("learning_roadmap"), list):
+        return None
+    return analysis
+
+
 def _answers_to_prompt_lines(answers: list[dict]) -> str:
     lines = []
     for item in answers:
