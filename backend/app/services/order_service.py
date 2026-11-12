@@ -34,9 +34,9 @@ from sqlalchemy.orm import Session
 from app.models.account import Account
 from app.models.order import Order
 from app.models.portfolio import Portfolio
-from app.models.security import ItemMaster
 from app.schemas.order import OrderRequest
 from app.services.order_book import ORDER_TYPES, BOOK_TYPES, resolve_price, executable
+from app.services.security_service import ensure_security as _ensure_security
 
 # 연습용 요율. 수수료는 매수·매도, 거래세는 매도만.
 FEE_RATE = Decimal("0.00015")
@@ -235,25 +235,6 @@ def check_pending_order(
     db.commit()
     db.refresh(order)
     return order
-
-
-def _ensure_security(db: Session, symbol_code: str, name: str | None, sector_code: str | None) -> ItemMaster:
-    """주문 전에 종목 행이 없으면 코드와 이름만 넣는다. 이미 있으면 그대로 둔다."""
-    security = db.query(ItemMaster).filter(ItemMaster.symbol_code == symbol_code).first()
-    if security:
-        return security
-    stock_name = (name or "").strip()
-    if not stock_name:
-        raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
-    security = ItemMaster(
-        symbol_code=symbol_code,
-        name=stock_name[:100],
-        market_type="국내주식",
-        sector_code=((sector_code or "").strip()[:20] or None),
-    )
-    db.add(security)
-    db.flush()
-    return security
 
 
 def _process_buy(

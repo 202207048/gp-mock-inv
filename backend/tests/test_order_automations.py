@@ -261,11 +261,11 @@ class AutomationTests(unittest.TestCase):
             self.assertFalse(real_capabilities()['enabled'])
 
     def test_unseeded_symbol_lookup_and_failure(self):
-        with patch.object(routes, 'get_listed_stock', AsyncMock(return_value={'name': '추가종목'})):
+        with patch.object(routes, 'resolve_listed_stock', AsyncMock(return_value={'name': '추가종목'})):
             self.assertEqual(self.client.post('/automations', json=self.request(symbol_code='373220')).status_code, 200)
         with self.Session() as db:
             self.assertEqual(db.get(ItemMaster, '373220').name, '추가종목')
-        with patch.object(routes, 'get_listed_stock', AsyncMock(return_value=None)):
+        with patch.object(routes, 'resolve_listed_stock', AsyncMock(return_value=None)):
             self.assertEqual(self.client.post('/automations', json=self.request(symbol_code='999999')).status_code, 404)
         with self.Session() as db:
             self.assertIsNone(db.get(ItemMaster, '999999'))

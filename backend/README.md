@@ -1,3 +1,9 @@
+## 미등록 국내 종목 주문 (2026-11-12)
+
+일반 주문(시장가·지정가·호가 기반)과 예약·조건 주문은 DB에 없는 국내 종목도 KIS 종목명, 없으면 종목코드가 정확히 일치하는 네이버 국내 주식 검색 결과로 확인하여 자동 등록합니다. 상세 조회와 같은 `security_service.resolve_listed_stock`을 사용하며, 시장가는 이미 받은 시세 응답을 재사용합니다. 종목 등록은 주문과 같은 트랜잭션에서 처리하고 중복 등록 충돌을 무시합니다. 서버 가격·호가 검증, 잔고·미수 제한, 자동 주문 감시 조건은 유지합니다. DB 스키마 변경은 없으며 적용하려면 백엔드를 배포해야 합니다.
+
+검증: `python -m unittest tests.test_security_resolution tests.test_order_types tests.test_order_automations tests.test_order_filled_at tests.test_misu -q` (격리 DB와 모의 시세).
+
 ## 계좌 자산 이력 (2026-11-03)
 
 백엔드 배포 시 `backend`에서 `alembic upgrade head`로 `l20261103_asset_history`를 적용한 후 서버를 재시작합니다. 새 `asset_history` 테이블만 추가하며 브라우저 기록을 이전하거나 과거 금액을 추정하지 않습니다.

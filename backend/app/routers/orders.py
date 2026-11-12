@@ -23,7 +23,8 @@ from app.models.order import Order
 from app.models.security import ItemMaster
 from app.models.user import User
 from app.schemas.order import OrderRequest, OrderResponse
-from app.services.kis_service import get_current_price, get_listed_stock
+from app.services.kis_service import get_current_price
+from app.services.security_service import resolve_listed_stock
 from app.services.order_service import create_order, check_pending_order
 from app.services.order_book import get_order_book, BOOK_TYPES, ORDER_TYPES
 from app.utils.deps import get_current_user
@@ -72,6 +73,7 @@ async def place_order(
     stock_name = known.name if known else None
     sector_code = None
     fill_price = req.price
+    quote = None
 
     if price_type == "시장가":
         try:
@@ -88,10 +90,8 @@ async def place_order(
         fill_price = Decimal(quote.get("current_price") or 0)
         if fill_price <= 0:
             raise HTTPException(status_code=400, detail="현재 시세를 확인할 수 없어 주문하지 않았습니다.")
-        if not stock_name:
-            stock_name = str(quote.get("name") or "").strip() or None
-    elif not stock_name:
-        listed = await get_listed_stock(req.symbol_code)
+    if not stock_name:
+        listed = await resolve_listed_stock(req.symbol_code, quote=quote)
         if not listed:
             raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
         stock_name = listed["name"]

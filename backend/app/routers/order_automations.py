@@ -11,7 +11,7 @@ from app.models.order_automation import OrderAutomation
 from app.models.security import ItemMaster
 from app.models.user import User
 from app.schemas.order_automation import AutomationRequest, AutomationResponse
-from app.services.kis_service import get_listed_stock
+from app.services.security_service import resolve_listed_stock, ensure_security
 from app.services.order_automation_service import INTERVAL_SECONDS, monitor_state, utc
 from app.utils.deps import get_current_user
 
@@ -76,7 +76,7 @@ async def register(req: AutomationRequest, current_user: User = Depends(get_curr
     listed = None
     if security is None:
         try:
-            listed = await get_listed_stock(req.symbol_code)
+            listed = await resolve_listed_stock(req.symbol_code)
         except Exception:
             raise HTTPException(503, '종목 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.')
         if not listed or not listed.get('name'):
@@ -99,14 +99,7 @@ async def register(req: AutomationRequest, current_user: User = Depends(get_curr
     if count >= 20:
         raise HTTPException(409, '계좌당 활성 예약·조건 주문은 최대 20개입니다.')
     if security is None:
-        # PostgreSQL conflict handling also covers concurrent registrations across accounts.
-        from sqlalchemy.dialects.postgresql import insert
-        if db.bind.dialect.name == 'postgresql':
-            db.execute(insert(ItemMaster).values(symbol_code=req.symbol_code, name=listed['name'][:100], market_type='국내주식')
-                       .on_conflict_do_nothing(index_elements=['symbol_code']))
-        elif db.get(ItemMaster, req.symbol_code) is None:
-            db.add(ItemMaster(symbol_code=req.symbol_code, name=listed['name'][:100], market_type='국내주식'))
-            db.flush()
+        ensure_security(db, req.symbol_code, listed['name'], listed.get('sector_code'))
     values = req.model_dump(exclude={'client_request_id'})
     values['expires_at'] = utc(req.expires_at)
     if req.scheduled_at:

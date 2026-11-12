@@ -25,7 +25,6 @@ from app.models.security import ItemMaster
 from app.schemas.security import SecurityResponse
 from app.services.kis_service import (
     get_current_price,
-    get_listed_stock,
     get_stock_chart,
     get_stock_ranking,
     STOCK_RANKING_TYPES,
@@ -37,6 +36,7 @@ from app.services.stock_fundamentals import get_stock_fundamentals
 from app.services.stock_analysis import get_stock_analysis
 from app.services.stock_ratings import get_stock_ratings
 from app.services.popular_stocks import get_popular_stocks
+from app.services.security_service import resolve_listed_stock
 from app.routers.stock_logos import router as stock_logos_router
 
 # prefix는 main.py에서 /api/stocks 로 지정
@@ -173,12 +173,9 @@ async def get_security(
     security = db.query(ItemMaster).filter(ItemMaster.symbol_code == symbol_code).first()
     if security:
         return security
-    listed = await get_listed_stock(symbol_code)
+    listed = await resolve_listed_stock(symbol_code)
     if listed:
         return listed
-    for item in await search_listed_stocks(symbol_code, 5):
-        if item["symbol_code"] == symbol_code:
-            return item
     raise HTTPException(status_code=404, detail="종목을 찾을 수 없습니다.")
 
 
